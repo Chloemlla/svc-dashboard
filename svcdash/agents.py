@@ -62,14 +62,18 @@ def scan_omp():
                 event = json.loads(raw)
             except (ValueError, TypeError):
                 continue
+            if not isinstance(event, dict):
+                continue
             ts = event.get("timestamp")
             if ts:
                 try:
                     last_ts = max(last_ts, datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp())
-                except ValueError:
+                except (ValueError, TypeError, AttributeError):
                     pass
-            data = event.get("data") or {}
-            if event.get("type") == "mode_change" and data.get("goal"):
+            data = event.get("data")
+            if not isinstance(data, dict):
+                data = {}
+            if event.get("type") == "mode_change" and isinstance(data.get("goal"), dict):
                 goal = data["goal"]
             if event.get("type") == "custom" and data.get("toolName"):
                 last_tool = str(data["toolName"])
@@ -129,7 +133,11 @@ def _codex_event_summary(path):
             event = json.loads(raw)
         except (ValueError, TypeError):
             continue
-        payload = event.get("payload") or {}
+        if not isinstance(event, dict):
+            continue
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            payload = {}
         etype = event.get("type", "")
         ptype = payload.get("type", "")
         if etype == "event_msg":

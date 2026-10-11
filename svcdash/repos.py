@@ -1,16 +1,84 @@
-import json, os, re, subprocess, time
+import json, os, re, subprocess, threading, time
+from pathlib import Path
 from svcdash.goals import watchdog_goals, parse_completed_goals
 from svcdash.agents import scan_omp, scan_codex
 from svcdash.i18n import t, DEFAULT_LANG
-# ---------------- 仓库层: agent/goal 改动过的 git 仓库 ----------------
-# 仓库集合来自现成数据源(watchdog GOALS workdir / 完成台账 workdir /
-# 在跑 omp/codex 的 cwd),逐级向上找 .git 定位仓库根,不做全盘扫描。
-# 提交事件(git log)60s 缓存;完整统计(du 大小/文件占比)600s 缓存,
+# ---------------- 仓库层: development git 仓库 + agent/goal 改动仓库 ----------------
+# 仓库集合包括 ~/development 下的 Git 项目，也补充 development 外的
+# watchdog GOALS / 完成台账 / OMP 和 Codex 当前工作仓库。只跳过依赖与缓存目录。
+# 提交事件(git log)60s 缓存;仓库统计600s缓存并异步刷新,
 # /api/repos?refresh=1 按需强制重算。
 
+_DEVELOPMENT_ROOT = "/home/tetsuya/development"
+_REPO_SKIP_DIRS = {".git", ".hg", ".svn", ".venv", "venv", "node_modules",
+                   "__pycache__", ".pytest_cache", ".mypy_cache", ".tox",
+                   "target", "build", "dist", "vendor"}
+
 _repo_set_cache = {"t": 0.0, "repos": None}
-_repo_ev_cache = {"t": 0.0, "data": None}
+_repo_ev_cache = {"t": 0.0, "data": None, "paths": []}
+_repo_ev_lock = threading.Lock()
 _repo_stats_cache = {"t": 0.0, "data": None}
+_REPO_STATS_PATH = Path("/home/tetsuya/.cache/svc-dashboard/repos.json")
+_REPO_EVENTS_PATH = Path("/home/tetsuya/.cache/svc-dashboard/events.json")
+_repo_refresh_lock = threading.Lock()
+
+
+def _load_repo_events_snapshot():
+    try:
+        data = json.loads(_REPO_EVENTS_PATH.read_text())
+        if isinstance(data, dict) and isinstance(data.get("events"), list):
+            _repo_ev_cache.update({"t": time.time(), "data": data["events"],
+                                   "paths": data.get("paths") or []})
+    except (OSError, ValueError, TypeError):
+        pass
+
+
+def _save_repo_events_snapshot(data, repos):
+    try:
+        _REPO_EVENTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _REPO_EVENTS_PATH.with_suffix(".tmp")
+        payload = {"updated": time.time(), "paths": [os.path.realpath(p) for p in repos],
+                   "events": data}
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+        os.replace(tmp, _REPO_EVENTS_PATH)
+    except OSError:
+        pass
+
+
+def _load_repo_stats_snapshot():
+    try:
+        data = json.loads(_REPO_STATS_PATH.read_text())
+        if isinstance(data, dict) and isinstance(data.get("repos"), list):
+            _repo_stats_cache.update({"t": time.time(), "data": data})
+    except (OSError, ValueError, TypeError):
+        pass
+
+
+def _save_repo_stats_snapshot(data):
+    try:
+        _REPO_STATS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _REPO_STATS_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")))
+        os.replace(tmp, _REPO_STATS_PATH)
+    except OSError:
+        pass
+
+
+def _refresh_repo_stats(repos):
+    try:
+        out = []
+        for repo in repos:
+            try:
+                out.append(_repo_one_stats(repo))
+            except Exception:
+                continue
+        out.sort(key=lambda x: -((x.get("last") or {}).get("ts") or 0))
+        data = {"updated": time.time(), "repos": out}
+        _repo_stats_cache.update({"t": time.time(), "data": data})
+        _save_repo_stats_snapshot(data)
+    finally:
+        _repo_refresh_lock.release()
+
 
 
 def _git(repo, args, timeout=6):
@@ -38,10 +106,22 @@ def _git_root(path):
 
 
 def agent_repos():
-    """agent/goal 任务改动过的 git 仓库根列表(去重,按 .git mtime 倒序)。"""
+    """development 下全部 Git 仓库，并补充 agent/goal 使用过的仓库根。"""
     now = time.time()
     if _repo_set_cache["repos"] is not None and now - _repo_set_cache["t"] < 60:
         return _repo_set_cache["repos"]
+    roots = {}
+    if os.path.isdir(_DEVELOPMENT_ROOT):
+        for current, dirs, _files in os.walk(_DEVELOPMENT_ROOT, followlinks=False):
+            if ".git" in dirs:
+                repo = os.path.realpath(current)
+                try:
+                    roots[repo] = os.path.getmtime(os.path.join(current, ".git"))
+                except OSError:
+                    roots[repo] = 0.0
+                dirs.remove(".git")
+            dirs[:] = [d for d in dirs if d not in _REPO_SKIP_DIRS]
+    discovered_roots = set(roots)
     dirs = []
     for g in watchdog_goals().values():
         if g.get("workdir"):
@@ -52,12 +132,13 @@ def agent_repos():
     for a in scan_omp() + scan_codex():
         if a.get("cwd"):
             dirs.append(a["cwd"])
-    roots = {}
     for d in dirs:
         if not os.path.isdir(d):
             continue
         r = _git_root(d)
         if not r:
+            continue
+        if r in discovered_roots:
             continue
         try:
             roots[r] = os.path.getmtime(os.path.join(r, ".git"))
@@ -69,68 +150,69 @@ def agent_repos():
 
 
 def parse_repo_commits(per_repo=30, total=150):
-    """各 agent 仓库最近提交 -> commit 事件(60s 缓存)。
-    支持 --name-status 解析变更文件列表及状态。
-    事件 shape 与 merge_events 其余来源同构: kind/src 均为 "commit"。"""
-    now = time.time()
-    if _repo_ev_cache["data"] is not None and now - _repo_ev_cache["t"] < 60:
-        return _repo_ev_cache["data"]
-    out = []
-    for repo in agent_repos():
-        name = os.path.basename(repo.rstrip("/"))
-        text = _git(repo, ["log", "-n", str(per_repo), "--name-status",
-                           "--format=COMMIT%x1f%h%x1f%ct%x1f%s%x1f%an"])
-        cur = None
-        for raw_line in text.splitlines():
-            line = raw_line.strip()
-            if not line:
-                continue
-            if line.startswith("COMMIT\x1f"):
-                if cur:
-                    out.append(cur)
-                parts = line.split("\x1f")
-                if len(parts) != 5:
-                    cur = None
+    """Build a cached commit feed once per process, sharing concurrent requests."""
+    with _repo_ev_lock:
+        now = time.time()
+        if _repo_ev_cache["data"] is None:
+            _load_repo_events_snapshot()
+        if _repo_ev_cache["data"] is not None and now - _repo_ev_cache["t"] < 300:
+            return _repo_ev_cache["data"]
+        repos = agent_repos()
+        out = []
+        for repo in repos:
+            name = os.path.basename(repo.rstrip("/"))
+            text = _git(repo, ["log", "-n", str(per_repo), "--name-status",
+                               "--format=COMMIT%x1f%h%x1f%ct%x1f%s%x1f%an"])
+            cur = None
+            for raw_line in text.splitlines():
+                line = raw_line.strip()
+                if not line:
                     continue
-                _, h, ct, subj, author = parts
-                try:
-                    ts = float(ct)
-                except ValueError:
-                    cur = None
-                    continue
-                cur = {
-                    "ts": ts,
-                    "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)),
-                    "gid": h,
-                    "name": name,
-                    "repo": name,
-                    "kind": "commit",
-                    "text": f"{subj} — {author}",
-                    "subject": subj,
-                    "author": author,
-                    "src": "commit",
-                    "files": [],
-                }
-            elif cur and "\t" in raw_line:
-                f_parts = raw_line.split("\t")
-                st = f_parts[0].strip()[:1].upper() if f_parts[0].strip() else "M"
-                fpath = f_parts[-1].strip()
-                cur["files"].append({"status": st, "path": fpath})
-        if cur:
-            out.append(cur)
-    try:
-        from svcdash.github import fetch_github_events, merge_commits
-        gh_events = fetch_github_events()
-        out = merge_commits(out, gh_events, total=total)
-    except Exception:
-        out.sort(key=lambda x: -x["ts"])
-        out = out[:total]
-    _repo_ev_cache.update({"t": now, "data": out})
-    return out
+                if line.startswith("COMMIT\x1f"):
+                    if cur:
+                        out.append(cur)
+                    parts = line.split("\x1f")
+                    if len(parts) != 5:
+                        cur = None
+                        continue
+                    _, h, ct, subj, author = parts
+                    try:
+                        ts = float(ct)
+                    except ValueError:
+                        cur = None
+                        continue
+                    cur = {
+                        "ts": ts,
+                        "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)),
+                        "gid": h,
+                        "name": name,
+                        "repo": name,
+                        "kind": "commit",
+                        "text": f"{subj} — {author}",
+                        "subject": subj,
+                        "author": author,
+                        "src": "commit",
+                        "files": [],
+                    }
+                elif cur and "\t" in raw_line:
+                    f_parts = raw_line.split("\t")
+                    st = f_parts[0].strip()[:1].upper() if f_parts[0].strip() else "M"
+                    cur["files"].append({"status": st, "path": f_parts[-1].strip()})
+            if cur:
+                out.append(cur)
+        try:
+            from svcdash.github import fetch_github_events, merge_commits
+            out = merge_commits(out, fetch_github_events(), total=total)
+        except Exception:
+            out.sort(key=lambda x: -x["ts"])
+            out = out[:total]
+        _repo_ev_cache.update({"t": now, "data": out})
+        _save_repo_events_snapshot(out, repos)
+        return out
 
 
-def _repo_one_stats(repo):
-    """单仓库统计: 分支/提交数/最近提交/大小(du)/未提交数/文件后缀占比。"""
+def _repo_one_stats(repo, include_traj=False):
+    """轻量仓库索引;完整轨迹仅在打开仓库详情时计算。"""
     st = {"name": os.path.basename(repo.rstrip("/")), "path": repo,
           "branch": _git(repo, ["rev-parse", "--abbrev-ref", "HEAD"]).strip() or "—"}
     cnt = _git(repo, ["rev-list", "--count", "HEAD"]).strip()
@@ -143,15 +225,11 @@ def _repo_one_stats(repo):
                       "subject": parts[2], "author": parts[3]}
     else:
         st["last"] = None
-    # 工作区大小: du 是最贵的一项,超时则 size=None 前端显示 —
-    try:
-        r = subprocess.run(["du", "-sb", repo], capture_output=True, text=True, timeout=20)
-        st["size"] = int(r.stdout.split()[0]) if r.returncode == 0 else None
-    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
-        st["size"] = None
+    st["size"] = None
     st["dirty"] = len([x for x in _git(repo, ["status", "--porcelain"]).splitlines() if x.strip()])
     st["files"] = sum(1 for f in _git(repo, ["ls-files"]).splitlines() if f)
-    st["traj"] = _traj_data(repo)["strip"]   # agent 操作轨迹条(近14天逐日色块)
+    if include_traj:
+        st["traj"] = _traj_data(repo)["strip"]
     return st
 
 
@@ -486,21 +564,26 @@ def repo_commit_diff(repo_name, commit_sha, max_bytes=100 * 1024, lang=DEFAULT_L
 
 
 def repo_stats(refresh=False):
-    """/api/repos 数据: 各仓库完整统计。600s 缓存;仓库集合变化或
-    ?refresh=1 时重算。"""
+    """Return the persisted repo index immediately; refresh stale data in one worker."""
     repos = agent_repos()
-    now = time.time()
-    if (not refresh and _repo_stats_cache["data"] is not None
-            and now - _repo_stats_cache["t"] < 600
-            and {r["path"] for r in _repo_stats_cache["data"]["repos"]} == set(repos)):
-        return _repo_stats_cache["data"]
-    out = []
-    for repo in repos:
-        try:
-            out.append(_repo_one_stats(repo))
-        except Exception:
-            continue
-    out.sort(key=lambda x: -((x.get("last") or {}).get("ts") or 0))
-    data = {"updated": time.time(), "repos": out}
-    _repo_stats_cache.update({"t": time.time(), "data": data})
-    return data
+    if _repo_stats_cache["data"] is None:
+        _load_repo_stats_snapshot()
+    cached = _repo_stats_cache["data"]
+    cached_paths = {r.get("path") for r in cached["repos"]} if cached else set()
+    missing = set(repos) - cached_paths
+    stale = time.time() - _repo_stats_cache["t"] >= 60
+    if (refresh or missing or stale or cached is None) and _repo_refresh_lock.acquire(False):
+        threading.Thread(target=_refresh_repo_stats, args=(repos,), daemon=True,
+                         name="svc-repo-index-refresh").start()
+    if cached is None:
+        return {"updated": time.time(), "repos": [{
+            "name": os.path.basename(p.rstrip("/")), "path": p, "branch": "…",
+            "commits": None, "last": None, "size": None, "dirty": 0,
+            "files": 0, "traj": []} for p in repos]}
+    if missing:
+        cached = dict(cached)
+        cached["repos"] = cached["repos"] + [{
+            "name": os.path.basename(p.rstrip("/")), "path": p, "branch": "…",
+            "commits": None, "last": None, "size": None, "dirty": 0,
+            "files": 0, "traj": []} for p in repos if p not in cached_paths]
+    return cached

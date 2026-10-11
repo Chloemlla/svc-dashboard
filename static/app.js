@@ -1292,12 +1292,29 @@ async function fetchGoalsData(force) {
   if (BOOT.static && BOOT.goalsData) return BOOT.goalsData;
   const now = Date.now();
   if (!force && goalsCache.data && now - goalsCache.t < 15000) return goalsCache.data;
+  const snap = snapGet("goals");
+  if (!force && snap && snap.data) {
+    goalsCache = { t: now, data: snap.data };
+    fetch("/api/goals?limit=" + LOG_LIMIT + "&lang=" + encodeURIComponent(LANG), { cache: "no-store" })
+      .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(d => { goalsCache = { t: Date.now(), data: d }; snapSet("goals", { data: d });
+                   if (page === 1) renderActivityPage(); })
+      .catch(err => console.error("goals refresh failed", err));
+    return snap.data;
+  }
   try {
     const r = await fetch("/api/goals?limit=" + LOG_LIMIT + "&lang=" + encodeURIComponent(LANG), { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
     const d = await r.json();
     if (d && d.updated) lastUpdatedTs = Math.max(lastUpdatedTs, d.updated * 1000);
     goalsCache = { t: now, data: d };
-  } catch (err) { console.error("goals refresh failed", err); }
+    snapSet("goals", { data: d });
+  } catch (err) {
+    console.error("goals refresh failed", err);
+    if (!force && page === 1) {
+      setTimeout(() => { if (page === 1 && !goalsCache.data) renderActivityPage(); }, 3000);
+    }
+  }
   return goalsCache.data;
 }
 
@@ -1907,6 +1924,15 @@ async function renderActivityPage() {
   const container = $("activity-body");
   if (!container) return;
   const d = await fetchGoalsData();
+  if (!d) {
+    container.innerHTML = `<div class="gempty t-red">${escHtml(t("act_load_failed"))}<button class="btn" type="button" id="act-retry">${escHtml(t("refresh"))}</button></div>`;
+    $("act-retry")?.addEventListener("click", async () => {
+      container.innerHTML = `<div class="gempty">${escHtml(t("a_loading"))}</div>`;
+      await fetchGoalsData(true);
+      renderActivityPage();
+    }, { once: true });
+    return;
+  }
   const events = (d && d.events) || [];
   const activityEvents = showStaticPublishCommits ? events : withLatestStaticPublishCommit(events);
   if (!activityEvents.length) {
