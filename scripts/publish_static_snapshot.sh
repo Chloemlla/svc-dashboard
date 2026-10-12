@@ -71,12 +71,35 @@ if [[ "${SVC_DASHBOARD_FORCE:-0}" != "1" && -s "$LAST_HASH_FILE" \
 fi
 
 git -C "$WORK_DIR" init -q
-git -C "$WORK_DIR" config --add privacy.public-identifiers iamcheyan
-git -C "$WORK_DIR" config --add privacy.public-identifiers tetsuya
+
+# The privacy hook matches $USER, the home directory name and the global git
+# identity against every published byte. This site intentionally publishes one
+# public handle, so allow that handle plus any *shorter fragment* of it: the
+# local git user.name is a case variant of such a fragment, and the hook's
+# allowlist comparison is case-sensitive while its matching is not. Longer
+# values — the global git email in particular — are deliberately NOT allowed,
+# so a future leak of them is still blocked.
+PUBLIC_HANDLE="${SVC_DASHBOARD_PUBLIC_HANDLE:-iamcheyan}"
+PUBLIC_IDENTIFIERS=$(python3 - "$PUBLIC_HANDLE" <<'PY'
+import os, subprocess, sys
+handle = (sys.argv[1] or "").casefold()
+values = [os.environ.get("USER", ""), os.path.basename(os.path.expanduser("~"))]
+for key in ("user.name", "user.email"):
+    values.append(subprocess.run(["git", "config", "--global", "--get", key],
+                                 capture_output=True, text=True).stdout.strip())
+explicit = [handle, "cheyan", "tetsuya"]
+fragments = [value for value in values if value and value.casefold() in handle]
+print("\n".join(dict.fromkeys([*explicit, *fragments])))
+PY
+) || PUBLIC_IDENTIFIERS="$PUBLIC_HANDLE"
+
 git -C "$WORK_DIR" checkout -q -b gh-pages
 git -C "$WORK_DIR" config user.name "svc-dashboard static publisher"
 git -C "$WORK_DIR" config user.email "svc-dashboard@example.com"
-export GIT_PRIVACY_PUBLIC_IDENTIFIERS="$(printf 'iamcheyan\ncheyan\ntetsuya')"
+while IFS= read -r identifier; do
+  [[ -n "$identifier" ]] && git -C "$WORK_DIR" config --add privacy.public-identifiers "$identifier"
+done <<< "$PUBLIC_IDENTIFIERS"
+export GIT_PRIVACY_PUBLIC_IDENTIFIERS="$PUBLIC_IDENTIFIERS"
 git -C "$WORK_DIR" add -A
 git -C "$WORK_DIR" commit -q -m "Update sanitized static snapshot $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 git -C "$WORK_DIR" remote add origin "$REMOTE_URL"
