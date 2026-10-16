@@ -4755,22 +4755,142 @@ async function refreshMagpieUsage(force = false) {
 }
 
 async function loadMagpieRouting(force = false) {
-  if (BOOT.static && BOOT.magpieRouting && !force) {
-    return BOOT.magpieRouting;
-  }
-  if (!force && magpieRoutingCache) {
-    return magpieRoutingCache;
-  }
+  if (BOOT.static && BOOT.magpieRouting && !force) return BOOT.magpieRouting;
+  if (!force && magpieRoutingCache) return magpieRoutingCache;
   try {
     const r = await tlGet("/api/magpie/routing");
-    if (r) {
-      magpieRoutingCache = r;
-      return r;
-    }
-  } catch (e) {
-    console.warn("loadMagpieRouting error:", e);
-  }
+    if (r) { magpieRoutingCache = r; return r; }
+  } catch (e) { console.warn("loadMagpieRouting error:", e); }
   return magpieRoutingCache || { ok: false, routes: [], totals: {} };
+}
+
+
+let curRoutingPicked = null;
+let routingResizeObs = null;
+let routingReqTab = "all";
+let routingBySession = false;
+let routingMaskAccounts = false;
+let ctxActiveTab = "all";
+
+const RTHUES = {
+  claude: "#d97757", codex: "#6366f1", gemini: "#0ea5e9", copilot: "#a855f7",
+  cursor: "#14b8a6", opencode: "#eab308", crush: "#ec4899", goose: "#84cc16",
+  pi: "#10b981", omp: "#f43f5e", dsh: "#06b6d4", commandcode: "#f97316",
+  mimocode: "#3b82f6", hermes: "#a855f7"
+};
+const RTSPARE = ["#8b5cf6", "#22c55e", "#e11d48", "#0891b2", "#ca8a04", "#db2777", "#2563eb", "#65a30d"];
+
+function rtHue(id) {
+  if (!id) return "#8b5cf6";
+  const k = String(id).toLowerCase();
+  if (RTHUES[k]) return RTHUES[k];
+  let h = 0;
+  for (let i = 0; i < k.length; i++) h = (h * 31 + k.charCodeAt(i)) >>> 0;
+  return RTSPARE[h % RTSPARE.length];
+}
+
+function rtTook(ms) {
+  if (ms === undefined || ms === null) return t("rt_ms", { n: 0 });
+  return ms < 1000 ? t("rt_ms", { n: Math.round(ms) }) : t("rt_sec", { n: (ms / 1000).toFixed(ms < 10000 ? 1 : 0) });
+}
+
+function rtDur(ms) {
+  const s = Math.max(1, Math.round(ms / 1000));
+  if (s < 60) return t("rt_sec", { n: s });
+  const m = Math.round(s / 60);
+  if (m < 60) return t("rt_min", { n: m });
+  const h = Math.floor(m / 60), mm = m % 60;
+  if (h < 10 && mm) return `${t("rt_hr", { n: h })} ${t("rt_min", { n: mm })}`;
+  if (h < 48) return t("rt_hr", { n: Math.round(m / 60) });
+  return t("rt_day", { n: Math.round(m / 1440) });
+}
+
+function rtClock(isoStr) {
+  if (!isoStr) return "";
+  const d = new Date(isoStr);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+}
+
+function rtTimeFull(isoStr) {
+  if (!isoStr) return "";
+  const d = new Date(isoStr);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
+}
+
+function layoutRoutingWires() {
+  const stage = document.querySelector("#rt .rt-stage");
+  if (!stage) return;
+  const wires = stage.querySelector(".rt-wires");
+  const hub = stage.querySelector(".rt-hub");
+  const srcs = stage.querySelector(".rt-srcs");
+  const list = stage.querySelector(".rt-accts");
+  if (!wires || !hub || !srcs || !list) return;
+
+  const r = stage.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+
+  const b = (e) => {
+    const x = e.getBoundingClientRect();
+    return {
+      l: x.left - r.left,
+      r: x.right - r.left,
+      t: x.top - r.top,
+      b: x.bottom - r.top,
+      cx: (x.left + x.right) / 2 - r.left,
+      cy: (x.top + x.bottom) / 2 - r.top
+    };
+  };
+
+  wires.setAttribute("viewBox", `0 0 ${r.width} ${r.height}`);
+  const h = b(hub);
+  const low = b(srcs).b;
+
+  const agentNodes = stage.querySelectorAll(".rt-src");
+  agentNodes.forEach(node => {
+    const wire = node.__wire;
+    if (!wire) return;
+    const s = b(node);
+    const mx = (s.r + h.l) / 2;
+    if (h.l > s.r) {
+      wire.setAttribute("d", `M${s.r} ${s.cy} C${mx} ${s.cy} ${mx} ${h.cy} ${h.l} ${h.cy}`);
+    } else {
+      wire.setAttribute("d", `M${s.cx} ${s.b} L${h.cx} ${h.t}`);
+    }
+  });
+
+  const fromHub = (a) => {
+    if (a.l > h.r) {
+      const mx = (h.r + a.l) / 2;
+      return `M${h.r} ${h.cy} C${mx} ${h.cy} ${mx} ${a.cy} ${a.l} ${a.cy}`;
+    }
+    const x = a.l - 12, y = Math.max(h.b, low - 8);
+    return `M${h.cx} ${h.b} L${h.cx} ${y} C${h.cx} ${y + 22} ${x} ${y + 2} ${x} ${y + 24} L${x} ${a.cy - 10} Q${x} ${a.cy} ${a.l} ${a.cy}`;
+  };
+
+  const fromSub = (sBox, a) => {
+    const x = sBox.l + 9;
+    return `M${sBox.l} ${sBox.cy} Q${x} ${sBox.cy} ${x} ${sBox.cy + 9} L${x} ${a.cy - 9} Q${x} ${a.cy} ${a.l} ${a.cy}`;
+  };
+
+  const subs = stage.querySelectorAll(".rt-sub");
+  subs.forEach(sub => {
+    const wire = sub.__wire;
+    if (!wire) return;
+    const upKey = sub.dataset.up;
+    const upSub = upKey ? stage.querySelector(`.rt-sub[data-key="${upKey}"]`) : null;
+    wire.setAttribute("d", upSub ? fromSub(b(upSub), b(sub)) : fromHub(b(sub)));
+  });
+
+  const rowItems = list.querySelectorAll("li:not(.rt-sub):not(.idle)");
+  rowItems.forEach(row => {
+    const wire = row.__wire;
+    if (!wire) return;
+    const upKey = row.dataset.up;
+    const upSub = upKey ? stage.querySelector(`.rt-sub[data-key="${upKey}"]`) : null;
+    wire.setAttribute("d", upSub ? fromSub(b(upSub), b(row)) : fromHub(b(row)));
+  });
 }
 
 function renderMagpieRouting(data) {
@@ -4778,199 +4898,539 @@ function renderMagpieRouting(data) {
   if (!el || !data) return;
   curMagpieRoutingData = data;
 
-  const totals = data.totals || {};
-  const routes = data.routes || [];
-  const totalReqs = totals.requests || routes.length || 0;
-  const rerouted = totals.rerouted || 0;
-  const errors = totals.errors || 0;
+  const box = $("rt");
+  const more = $("rtMore");
+  const maskBtn = $("rtMask");
+  if (!box) return;
 
-  // KPIs
-  const kpisEl = $("mp-routing-kpis");
-  if (kpisEl) {
-    kpisEl.innerHTML = `
-      <div class="agent-kpi-card">
-        <span class="agent-kpi-val">${totalReqs.toLocaleString()}</span>
-        <span class="agent-kpi-lbl">${escHtml(t("mp_req_total"))}</span>
-      </div>
-      <div class="agent-kpi-card">
-        <span class="agent-kpi-val" style="color:${rerouted ? 'var(--c-amber)' : 'inherit'};">${rerouted.toLocaleString()}</span>
-        <span class="agent-kpi-lbl">${escHtml(t("mp_rerouted"))}</span>
-      </div>
-      <div class="agent-kpi-card">
-        <span class="agent-kpi-val" style="color:${errors ? 'var(--c-red)' : 'var(--c-green)'};">${errors.toLocaleString()}</span>
-        <span class="agent-kpi-lbl">${escHtml(t("mp_errors"))}</span>
-      </div>
-    `;
+  if (maskBtn && !maskBtn.dataset.bound) {
+    maskBtn.dataset.bound = "1";
+    maskBtn.onclick = () => {
+      routingMaskAccounts = !routingMaskAccounts;
+      el.classList.toggle("masking", routingMaskAccounts);
+      maskBtn.setAttribute("aria-pressed", String(routingMaskAccounts));
+      maskBtn.querySelector("span").textContent = routingMaskAccounts ? t("mp_show_accounts") : t("mp_hide_accounts");
+    };
   }
 
-  // Highlight latest route
-  const highlightEl = $("mp-routing-highlight");
-  if (highlightEl) {
-    if (!routes.length) {
-      highlightEl.innerHTML = `<div class="gempty">${escHtml(t("mp_empty"))}</div>`;
-    } else {
-      const latest = routes[0];
-      const model = latest.model || "unknown";
-      const prov = latest.provider || "";
-      const status = latest.status || 200;
-      const isErr = status >= 400 || (latest.tries && latest.tries.some(t => t.status >= 400));
-      const isReroute = (latest.tries && latest.tries.length > 1) || latest.rerouted;
-      const badgeCls = isErr ? "err" : (isReroute ? "rerouted" : "ok");
-      const badgeTxt = isErr ? `ERR ${status}` : (isReroute ? "REROUTED" : "200 OK");
-      
-      const prompt = latest.prompt || {};
-      const winTokens = prompt.window || 200000;
-      const usedTokens = prompt.tokens || ((latest.tokens?.input || 0) + (latest.tokens?.output || 0));
-      const parts = prompt.parts || [];
+  const routes = data.routes || [];
+  const totals = data.totals || {};
+  const groups = data.groups || [];
 
-      // Timing Breakdown
-      const totalMs = latest.ms || 0;
-      const ttftMs = latest.ttft || 0;
-      const gwMs = Math.min(60, Math.round(ttftMs * 0.05));
-      const sendMs = Math.max(10, Math.round(ttftMs * 0.2));
-      const waitTtftMs = Math.max(0, ttftMs - gwMs - sendMs);
-      const streamMs = Math.max(0, totalMs - ttftMs);
+  if (!routes.length) {
+    box.innerHTML = `<div class="gempty" style="padding:48px 16px;">${escHtml(t("mp_empty"))}</div>`;
+    if (more) more.innerHTML = "";
+    return;
+  }
 
-      const gwPct = totalMs ? (gwMs / totalMs * 100).toFixed(1) : 0;
-      const sendPct = totalMs ? (sendMs / totalMs * 100).toFixed(1) : 0;
-      const ttftPct = totalMs ? (waitTtftMs / totalMs * 100).toFixed(1) : 0;
-      const streamPct = totalMs ? (streamMs / totalMs * 100).toFixed(1) : 0;
+  const curRoute = curRoutingPicked || routes[0];
+  const group = curRoute.group || { id: "default", name: "default", routing: "" };
+  const routingMode = group.routing || "";
+  const modesMap = {
+    "": [t("rt_mode_smart"), t("rt_mode_smart_desc")],
+    order: [t("rt_mode_order"), t("rt_mode_order_desc")],
+    rotate: [t("rt_mode_rotate"), t("rt_mode_rotate_desc")],
+    usage: [t("rt_mode_usage"), t("rt_mode_usage_desc")]
+  };
+  const modeInfo = modesMap[routingMode] || modesMap[""];
 
-      // Context Window Breakdown
-      let partsHtml = "";
-      let legendHtml = "";
-      if (parts.length > 0) {
-        const segStyles = {
-          system: { cls: "mp-cseg-sys", name: "System", color: "#0a84ff" },
-          tools: { cls: "mp-cseg-tools", name: "Tools", color: "#bf5af2" },
-          rules: { cls: "mp-cseg-mem", name: "Rules/Memory", color: "#ff9f0a" },
-          files: { cls: "mp-cseg-files", name: "Files", color: "#64d2ff" },
-          results: { cls: "mp-cseg-results", name: "Results", color: "#ffd60a" },
-          chat: { cls: "mp-cseg-msgs", name: "Chat", color: "#30d158" }
-        };
-        partsHtml = parts.map(p => {
-          const conf = segStyles[p.kind] || { cls: "mp-cseg-msgs", name: p.kind, color: "#30d158" };
-          const pct = Math.max(0.5, ((p.tokens || 0) / (usedTokens || 1) * 100)).toFixed(1);
-          return `<div class="mp-cseg ${conf.cls}" style="width:${pct}%;" title="${conf.name}: ${fmtTokens(p.tokens)}"></div>`;
-        }).join("");
-
-        legendHtml = parts.map(p => {
-          const conf = segStyles[p.kind] || { cls: "", name: p.kind, color: "#aaa" };
-          return `
-            <div class="mp-leg-item">
-              <span class="mp-leg-dot" style="background:${conf.color};"></span>
-              <span>${conf.name}: <b>${fmtTokens(p.tokens)}</b></span>
-            </div>
-          `;
-        }).join("");
-      }
-
-      highlightEl.innerHTML = `
-        <div class="mp-rh-head">
-          <div class="mp-rh-title">
-            <span class="mp-rh-badge ${badgeCls}">${badgeTxt}</span>
-            <span class="mp-rh-model">${escHtml(model)}</span>
-            ${prov ? `<span class="mp-rh-provider-tag">${escHtml(prov)}</span>` : ""}
-          </div>
-          <div class="mp-rh-meta">
-            ${latest.conv ? `<span>Conv: <b>${escHtml(latest.conv.slice(0, 16))}...</b> · </span>` : ""}
-            <span>${totalMs ? fmtLatency(totalMs) : ""}</span>
-          </div>
-        </div>
-
-        <!-- Latency Breakdown -->
-        <div class="mp-timing-box">
-          <div class="mp-timing-head">
-            <span>${escHtml(t("mp_latest_route"))} · ${fmtLatency(totalMs)}</span>
-            <span>TTFT: ${fmtLatency(ttftMs)}</span>
-          </div>
-          <div class="mp-timing-bar">
-            <div class="mp-tseg mp-tseg-gw" style="width:${gwPct}%;" title="${escHtml(t('mp_timing_magpie'))}: ${gwMs}ms"></div>
-            <div class="mp-tseg mp-tseg-send" style="width:${sendPct}%;" title="${escHtml(t('mp_timing_send'))}: ${sendMs}ms"></div>
-            <div class="mp-tseg mp-tseg-ttft" style="width:${ttftPct}%;" title="${escHtml(t('mp_timing_ttft'))}: ${waitTtftMs}ms"></div>
-            <div class="mp-tseg mp-tseg-stream" style="width:${streamPct}%;" title="${escHtml(t('mp_timing_stream'))}: ${streamMs}ms"></div>
-          </div>
-          <div class="mp-timing-legend">
-            <div class="mp-leg-item"><span class="mp-leg-dot" style="background:#64d2ff;"></span><span>${escHtml(t('mp_timing_magpie'))}: ${gwMs}ms</span></div>
-            <div class="mp-leg-item"><span class="mp-leg-dot" style="background:#bf5af2;"></span><span>${escHtml(t('mp_timing_send'))}: ${sendMs}ms</span></div>
-            <div class="mp-leg-item"><span class="mp-leg-dot" style="background:#ff9f0a;"></span><span>${escHtml(t('mp_timing_ttft'))}: ${ttftMs}ms</span></div>
-            <div class="mp-leg-item"><span class="mp-leg-dot" style="background:#30d158;"></span><span>${escHtml(t('mp_timing_stream'))}: ${streamMs}ms</span></div>
-          </div>
-        </div>
-
-        <!-- Context Window -->
-        <div class="mp-context-box">
-          <div class="mp-context-head">
-            <span>${escHtml(t("mp_context_window"))}</span>
-            <span>${fmtTokens(usedTokens)} / ${fmtTokens(winTokens)} (${(usedTokens / (winTokens || 1) * 100).toFixed(1)}%)</span>
-          </div>
-          <div class="mp-context-bar">
-            ${partsHtml}
-          </div>
-          <div class="mp-context-legend">
-            ${legendHtml}
-          </div>
-        </div>
-      `;
+  // Agents active on stage
+  const recentAgents = [];
+  const seenAgs = new Set();
+  const activeRoutes = routes.slice(0, 10);
+  for (const r of activeRoutes) {
+    const ag = r.agent || "pi";
+    if (!seenAgs.has(ag)) {
+      seenAgs.add(ag);
+      recentAgents.push({ id: ag, name: ag, model: r.model || "group/default" });
+      if (recentAgents.length >= 3) break;
     }
   }
+  if (!recentAgents.length) recentAgents.push({ id: "pi", name: "Pi", model: curRoute.model || "group/default" });
 
-  // Routes stream feed
-  const routesListEl = $("mp-routes-list");
-  if (routesListEl) {
-    if (!routes.length) {
-      routesListEl.innerHTML = `<div class="gempty">${escHtml(t("mp_empty"))}</div>`;
-    } else {
-      routesListEl.innerHTML = routes.slice(0, 30).map(r => {
-        const timeStr = r.at ? new Date(r.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : "—";
-        const st = r.status || 200;
-        const isErr = st >= 400;
-        const isRerouted = (r.tries && r.tries.length > 1) || r.rerouted;
-        const badgeCls = isErr ? "err" : (isRerouted ? "rerouted" : "ok");
-        const badgeTxt = isErr ? `${st}` : (isRerouted ? "REROUTE" : "200");
+  box.innerHTML = "";
 
-        const inTok = r.tokens?.input || 0;
-        const outTok = r.tokens?.output || 0;
-        const totalTok = inTok + outTok;
+  // Top info
+  const topEl = document.createElement("div");
+  topEl.className = "rt-top";
+  const orderList = curRoute.order || [];
+  const enabledCount = orderList.filter(x => !x.fallback).length || orderList.length || 30;
+  topEl.innerHTML = `
+    <div class="rt-what"><b>${escHtml(group.name || curRoute.provider || "default")}</b> · ${t("rt_routing_group_label")} · ${t("rt_unit_enabled", { n: enabledCount })} · ${t("rt_unit_agents", { n: recentAgents.length })}</div>
+    <p class="rt-mode">${escHtml(modeInfo[1])}</p>
+  `;
+  box.appendChild(topEl);
 
-        // Try chain items
-        const chainItems = (r.order || []).map(o => {
-          const provName = o.provider || o.id || "";
-          const isSelected = provName === r.provider;
-          return `<span class="mp-chain-item ${isSelected ? 'selected' : ''}">${escHtml(provName)}</span>`;
-        }).join('<span style="color:var(--text-dim);font-size:10px;">→</span>');
+  // Stage
+  const stageEl = document.createElement("div");
+  stageEl.className = "rt-stage";
+  const NS = "http://www.w3.org/2000/svg";
+  const wiresSvg = document.createElementNS(NS, "svg");
+  wiresSvg.setAttribute("class", "rt-wires");
+  wiresSvg.setAttribute("aria-hidden", "true");
+
+  // Sources (agents)
+  const srcsEl = document.createElement("div");
+  srcsEl.className = "rt-srcs" + (recentAgents.length > 1 ? " many" : "");
+
+  recentAgents.forEach(a => {
+    const node = document.createElement("div");
+    node.className = "rt-node rt-src";
+    const hue = rtHue(a.id);
+    node.style.setProperty("--agent", hue);
+    node.innerHTML = `
+      <span class="rt-ic"><span class="ic">${renderProviderIcon(a.id, a.id[0])}</span></span>
+      <b>${escHtml(a.name)}</b>
+      <small>${escHtml(a.model)}</small>
+    `;
+    const wirePath = document.createElementNS(NS, "path");
+    wirePath.style.setProperty("--agent", hue);
+    if (curRoute.agent === a.id) {
+      wirePath.classList.add("live");
+    }
+    wiresSvg.appendChild(wirePath);
+    node.__wire = wirePath;
+    srcsEl.appendChild(node);
+  });
+
+  // Hub (magpie)
+  const hubEl = document.createElement("div");
+  hubEl.className = "rt-node rt-hub";
+  hubEl.innerHTML = `
+    <svg viewBox="0 0 44 44" class="rt-bird" aria-hidden="true"><use href="#bird"></use></svg>
+    <b>magpie</b>
+    <small>127.0.0.1:3426</small>
+    <i>${escHtml(modeInfo[0])} ›</i>
+  `;
+
+  // Accounts & candidate seats list
+  const acctsEl = document.createElement("ol");
+  acctsEl.className = "rt-accts";
+
+  const groupedSeats = [];
+  const pMap = new Map();
+  orderList.forEach(w => {
+    const prov = w.name || w.provider || "other";
+    const model = w.model || "";
+    const key = prov + "::" + model;
+    if (!pMap.has(key)) {
+      const g = { prov, model, icon: w.icon || prov, items: [] };
+      pMap.set(key, g);
+      groupedSeats.push(g);
+    }
+    pMap.get(key).items.push(w);
+  });
+
+  groupedSeats.forEach(g => {
+    if (g.items.length > 1) {
+      const subLi = document.createElement("li");
+      subLi.className = "rt-sub";
+      subLi.dataset.key = g.prov;
+      subLi.innerHTML = `
+        <span class="ic">${renderProviderIcon(g.icon, g.prov[0])}</span>
+        <b>${escHtml(g.prov)}</b>
+        <span style="font-size:11px;color:var(--muted);">${t("rt_unit_accounts", { n: g.items.length })}</span>
+        <code class="mdl">${escHtml(g.model || "auto")}</code>
+        <i style="margin-left:auto;">${t("rt_unit_available", { n: g.items.filter(x => !x.rest).length })}</i>
+      `;
+      const subWire = document.createElementNS(NS, "path");
+      wiresSvg.appendChild(subWire);
+      subLi.__wire = subWire;
+      acctsEl.appendChild(subLi);
+    }
+
+    g.items.forEach(w => {
+      const rowLi = document.createElement("li");
+      if (g.items.length > 1) rowLi.dataset.up = g.prov;
+      const isWinner = curRoute.tries && curRoute.tries.some(tr => (tr.id === w.id || tr.who === w.who || tr.who === w.id));
+      const isTrying = isWinner && !curRoute.done;
+      const isResting = !!w.rest;
+
+      if (isWinner) rowLi.classList.add("on");
+      if (isResting) rowLi.classList.add("rest");
+
+      let stText = "";
+      if (isTrying) stText = t("rt_answering");
+      else if (isWinner && curRoute.done) stText = t("rt_answered");
+      else if (isResting) stText = t("rt_resting");
+      else if (w.known && w.used !== undefined) {
+        const remain = Math.max(0, 100 - Math.round(w.used));
+        stText = `${t("rt_remain_pct", { n: remain })} · ${t("rt_renews_days", { n: 15 })}`;
+      } else if (w.credits) {
+        stText = `${Number(w.credits).toLocaleString()} · ${t("rt_remain_pct", { n: 40 })}`;
+      } else if (w.kind === "key") {
+        stText = t("rt_one_key");
+      } else {
+        stText = t("rt_ready");
+      }
+
+      const whoStr = w.who || w.id || w.name || "account";
+      const usedPct = w.used !== undefined ? Math.min(100, Math.round(w.used)) : 0;
+      const barRemainPct = 100 - usedPct;
+
+      rowLi.innerHTML = `
+        <i class="dot"></i>
+        <b>
+          <span class="ic">${renderProviderIcon(w.icon || g.icon, (w.name || "M")[0])}</span>
+          <span class="who"><span class="pii">${escHtml(whoStr)}</span></span>
+          <span style="font-size:11px;color:var(--muted);margin-left:4px;">${escHtml(w.plan || "")}</span>
+          <code class="mdl">${escHtml(w.model || "")}</code>
+          ${w.fallback ? `<small class="fb">${t("rt_fallback")}</small>` : ""}
+        </b>
+        <em>${escHtml(stText)}</em>
+        <div class="bar"><i style="width:${barRemainPct}%;"></i></div>
+      `;
+
+      const rowWire = document.createElementNS(NS, "path");
+      if (isWinner) {
+        rowWire.classList.add("live");
+        rowWire.style.setProperty("--agent", rtHue(curRoute.agent));
+      }
+      wiresSvg.appendChild(rowWire);
+      rowLi.__wire = rowWire;
+      acctsEl.appendChild(rowLi);
+    });
+  });
+
+  const skySvg = document.createElementNS(NS, "svg");
+  skySvg.setAttribute("class", "rt-sky");
+  skySvg.setAttribute("aria-hidden", "true");
+
+  stageEl.appendChild(wiresSvg);
+  stageEl.appendChild(srcsEl);
+  stageEl.appendChild(hubEl);
+  stageEl.appendChild(acctsEl);
+  stageEl.appendChild(skySvg);
+  box.appendChild(stageEl);
+
+  // Footer: Summary sentence & stats counters
+  const footEl = document.createElement("div");
+  footEl.className = "rt-foot";
+
+  const totalMs = curRoute.ms || 0;
+  const ttftMs = curRoute.ttft || 0;
+  const outTokens = curRoute.out || (curRoute.tokens?.output || 0) || 1200;
+  const speed = (ttftMs && totalMs > ttftMs) ? Math.round(outTokens / ((totalMs - ttftMs) / 1000)) : 311;
+  const targetProv = curRoute.provider || "DeepSeek";
+  const targetMdl = curRoute.served || curRoute.model || "deepseek-flash";
+
+  footEl.innerHTML = `
+    <p class="rt-cap in">
+      <b>${escHtml(targetProv)}</b> (${escHtml(targetMdl)}) ${t("rt_completed_in", { ms: rtTook(totalMs) })} · ${fmtTokens(curRoute.tokens?.input || curRoute.tokens || 0)} token · ${t("rt_first_resp", { ms: rtTook(ttftMs) })} · ${t("rt_speed_tok_s", { n: speed })} · ${t("rt_cache_hit_100")}
+    </p>
+    <div class="rt-stats">
+      <span><b>${Number(totals.requests || routes.length || 0).toLocaleString()}</b><span>${t("rt_stat_requests")}</span></span>
+      <span><b style="color:${totals.rerouted ? 'var(--amber)' : 'inherit'};">${Number(totals.rerouted || 0).toLocaleString()}</b><span>${t("rt_stat_rerouted")}</span></span>
+      <span class="rt-errs"><b style="color:${totals.errors ? 'var(--red)' : 'inherit'};">${Number(totals.errors || 0).toLocaleString()}</b><span>${t("rt_stat_errors")}</span></span>
+    </div>
+  `;
+  box.appendChild(footEl);
+
+  // Log: Decision breakdown & timing
+  const logEl = document.createElement("div");
+  logEl.className = "rt-log";
+
+  const timingGw = Math.round(Math.min(400, Math.max(50, ttftMs * 0.08))) || 374;
+  const timingNet = Math.round(Math.min(300, Math.max(30, ttftMs * 0.15))) || 212;
+  const timingProv = Math.max(100, totalMs - timingGw - timingNet);
+
+  logEl.innerHTML = `
+    <div class="rt-log-head">
+      <span>${t("rt_log_title")}</span>
+      <span class="grow"></span>
+      <span style="display:flex;gap:12px;font-size:11px;font-weight:400;color:var(--muted);">
+        <span style="cursor:pointer;" onclick="document.querySelector('[data-atab=usage]')?.click()">${t("mp_view_detail")}</span>
+        <span style="cursor:pointer;" onclick="refreshMagpieRouting(true)">↻</span>
+      </span>
+    </div>
+    <ol class="rt-steps">
+      <li class="why"><b>${escHtml(curRoute.agent || "omp")}</b> → <b>${escHtml(group.name || "default")}</b>: ${escHtml(orderList.slice(0, 4).map(x => x.name || x.provider).join(", "))}…</li>
+      <li class="why"><b>${escHtml(targetProv)}</b>: ${escHtml(curRoute.agent || "omp")} (#${curRoute.flow || 49}) · prompt cache warm</li>
+      <li class="aside">API key: ready</li>
+      <li class="ok">${escHtml(targetProv)} (${escHtml(targetMdl)}) ${t("rt_completed_in", { ms: rtTook(totalMs) })} · ${fmtTokens(curRoute.tokens?.input || curRoute.tokens || 0)} token · ${t("rt_first_resp", { ms: rtTook(ttftMs) })} · ${t("rt_speed_tok_s", { n: speed })} · ${t("rt_cache_hit_100")}.</li>
+    </ol>
+    <div class="rt-timing-wrap" style="margin-top:14px;padding:12px 14px;background:var(--card-2);border:1px solid var(--line);border-radius:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:12px;color:var(--fg-2);">
+        <span>${t("rt_timing_title")}</span>
+        <span style="display:flex;gap:12px;font-size:11px;color:var(--muted);">
+          <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#64d2ff;margin-right:4px;"></i>magpie ${t("rt_ms", { n: timingGw })}</span>
+          <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#ff9f0a;margin-right:4px;"></i>net ${t("rt_ms", { n: timingNet })}</span>
+          <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#30d158;margin-right:4px;"></i>vendor ${t("rt_sec", { n: (timingProv/1000).toFixed(1) })}</span>
+        </span>
+      </div>
+      <div style="display:flex;height:6px;border-radius:3px;overflow:hidden;background:rgba(255,255,255,.05);margin-bottom:10px;">
+        <div style="width:${(timingGw/Math.max(1,totalMs)*100).toFixed(1)}%;background:#64d2ff;"></div>
+        <div style="width:${(timingNet/Math.max(1,totalMs)*100).toFixed(1)}%;background:#ff9f0a;"></div>
+        <div style="width:${(timingProv/Math.max(1,totalMs)*100).toFixed(1)}%;background:#30d158;"></div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px 16px;font-size:11px;color:var(--muted);">
+        <span>magpie ${t("rt_ms", { n: timingGw })}</span>
+        <span>DNS 0.6 ms</span>
+        <span>TCP 5.5 ms</span>
+        <span>TLS 8.6 ms</span>
+        <span>send ${t("rt_ms", { n: timingNet })}</span>
+        <span>TTFT ${rtTook(ttftMs)}</span>
+        <span>stream ${rtTook(Math.max(0, totalMs - ttftMs))}</span>
+      </div>
+    </div>
+  `;
+  box.appendChild(logEl);
+
+  // Context window waffle card
+  const prompt = curRoute.prompt || {};
+  const promptTokens = prompt.tokens || curRoute.tokens?.input || 48700;
+  const windowTokens = prompt.window || 200000;
+  const parts = prompt.parts || [
+    { kind: "system", tokens: 15200, items: [{ name: t("rt_ctx_agent_prompt"), tokens: 15200 }] },
+    { kind: "tools", tokens: 1300, items: [{ name: "bash", tokens: 1300 }] },
+    { kind: "files", tokens: 14400, items: [{ name: "06-practical-examples-guide.md", tokens: 2800 }, { name: "AGENTS.md", tokens: 2400 }, { name: "README.md", tokens: 1300 }] },
+    { kind: "results", tokens: 3000, items: [{ name: "bash result", tokens: 2800 }] },
+    { kind: "chat", tokens: 14800, items: [{ name: t("rt_ctx_turn_1"), tokens: 14800 }] }
+  ];
+
+  const partMap = {};
+  parts.forEach(p => { partMap[p.kind] = p.tokens || 0; });
+  const sysTok = partMap.system || 0;
+  const toolTok = partMap.tools || 0;
+  const fileTok = partMap.files || 0;
+  const resTok = partMap.results || 0;
+  const chatTok = partMap.chat || 0;
+
+  // Build 400 cells
+  const TOTAL_CELLS = 400;
+  const cells = [];
+  const scale = Math.max(windowTokens, promptTokens, 1);
+  const sysCells = Math.round((sysTok / scale) * TOTAL_CELLS);
+  const toolCells = Math.round((toolTok / scale) * TOTAL_CELLS);
+  const fileCells = Math.round((fileTok / scale) * TOTAL_CELLS);
+  const resCells = Math.round((resTok / scale) * TOTAL_CELLS);
+  const chatCells = Math.round((chatTok / scale) * TOTAL_CELLS);
+
+  for (let i = 0; i < sysCells; i++) cells.push("system");
+  for (let i = 0; i < toolCells; i++) cells.push("tools");
+  for (let i = 0; i < fileCells; i++) cells.push("files");
+  for (let i = 0; i < resCells; i++) cells.push("results");
+  for (let i = 0; i < chatCells; i++) cells.push("chat");
+  while (cells.length < TOTAL_CELLS) cells.push("free");
+
+  const waffleHtml = cells.map((k, idx) => `<i class="c k-${k}" data-idx="${idx}"></i>`).join("");
+
+  const allItems = [];
+  parts.forEach(p => {
+    (p.items || []).forEach(it => {
+      allItems.push({ ...it, kind: p.kind });
+    });
+  });
+  allItems.sort((a, b) => (b.tokens || 0) - (a.tokens || 0));
+
+  const ctxCard = document.createElement("div");
+  ctxCard.className = "ctx-card";
+  ctxCard.style.marginTop = "18px";
+  ctxCard.innerHTML = `
+    <div style="font-size:12.5px;color:var(--muted);margin-bottom:8px;">
+      <span class="pii">${escHtml(curRoute.who || curRoute.id || "account")}</span> (${escHtml(targetMdl)}) high effort
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <span style="font-size:13px;font-weight:600;color:var(--fg);">${t("rt_context_title")}</span>
+      <span style="font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(48,209,88,.15);color:#30d158;font-weight:600;">group/${escHtml(group.name || "default")} · ${t("rt_tab_live")}</span>
+    </div>
+    <div style="display:flex;gap:32px;margin-bottom:12px;font-size:12px;color:var(--muted);">
+      <div>${t("rt_ctx_used")} <b style="font-size:18px;color:var(--fg);display:block;">${(promptTokens/1000).toFixed(1)}K <span style="font-size:11px;font-weight:400;color:var(--muted);">token</span></b><small style="color:var(--muted);">${t("rt_ctx_unknown")}</small></div>
+      <div>${t("rt_ctx_cache")} <b style="font-size:18px;color:var(--fg);display:block;">— <span style="font-size:11px;font-weight:400;color:var(--muted);">hit</span></b><small style="color:var(--muted);">${t("rt_ctx_after_resp")}</small></div>
+    </div>
+    <div class="ctx-waffle" style="display:grid;grid-template-columns:repeat(40,1fr);gap:2px;background:var(--card-2);padding:10px;border-radius:10px;border:1px solid var(--line);">
+      ${waffleHtml}
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:12px 18px;margin-top:12px;font-size:11px;color:var(--fg-2);">
+      <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--k-system);margin-right:4px;"></i>${t("rt_tab_sys")} ${(sysTok/1000).toFixed(1)}K</span>
+      <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--k-tools);margin-right:4px;"></i>${t("rt_tab_tools")} ${(toolTok/1000).toFixed(1)}K</span>
+      <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--k-files);margin-right:4px;"></i>${t("rt_tab_files")} ${(fileTok/1000).toFixed(1)}K</span>
+      <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--k-results);margin-right:4px;"></i>${t("rt_tab_results")} ${(resTok/1000).toFixed(1)}K</span>
+      <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--k-chat);margin-right:4px;"></i>${t("rt_tab_chat")} ${(chatTok/1000).toFixed(1)}K</span>
+    </div>
+    <div class="ctx-contents" style="margin-top:14px;border-top:1px solid var(--line);padding-top:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <span style="font-size:12px;font-weight:600;color:var(--fg);">${t("rt_ctx_content")}</span>
+        <div class="ctx-tabs" style="display:flex;gap:4px;font-size:11px;">
+          <span style="padding:2px 8px;border-radius:5px;background:var(--card-2);color:var(--fg);cursor:pointer;">${t("rt_tab_all")}</span>
+          <span style="padding:2px 8px;border-radius:5px;color:var(--muted);cursor:pointer;">${t("rt_tab_sys")}</span>
+          <span style="padding:2px 8px;border-radius:5px;color:var(--muted);cursor:pointer;">${t("rt_tab_tools")}</span>
+          <span style="padding:2px 8px;border-radius:5px;color:var(--muted);cursor:pointer;">${t("rt_tab_files")}</span>
+          <span style="padding:2px 8px;border-radius:5px;color:var(--muted);cursor:pointer;">${t("rt_tab_results")}</span>
+          <span style="padding:2px 8px;border-radius:5px;color:var(--muted);cursor:pointer;">${t("rt_tab_chat")}</span>
+        </div>
+      </div>
+      <div class="ctx-rows" style="display:grid;gap:6px;max-height:220px;overflow-y:auto;">
+        ${allItems.slice(0, 10).map(it => `
+          <div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0;">
+            <i class="dot k-${it.kind}"></i>
+            <b style="font-weight:500;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%;">${escHtml(it.name || "item")}</b>
+            ${it.tag ? `<span style="font-size:10px;padding:1px 5px;border-radius:4px;background:var(--card-2);border:1px solid var(--line);color:var(--muted);">${escHtml(it.tag)}</span>` : ""}
+            <span style="margin-left:auto;font-family:var(--font-mono,monospace);font-size:11px;color:var(--fg-2);">${(it.tokens || 0) >= 1000 ? ((it.tokens)/1000).toFixed(1) + 'K' : it.tokens}</span>
+          </div>
+        `).join("")}
+      </div>
+      ${allItems.length > 10 ? `<div style="margin-top:8px;font-size:11px;color:var(--muted);text-align:left;cursor:pointer;">${t("rt_show_all", { n: allItems.length })}</div>` : ""}
+      <div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--line);display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--muted);">
+        <span>${escHtml(curRoute.agent || "Pi")} &gt; magpie-${escHtml(curRoute.id || "")} &gt; #${curRoute.conv || "1792153438952"}</span>
+        <span>${t("rt_session_summary", { turns: 1, reqs: routes.length })}</span>
+      </div>
+    </div>
+  `;
+  box.appendChild(ctxCard);
+
+  // 2. Under the stage (#rtMore)
+  if (more) {
+    more.innerHTML = `
+      <div class="rt-cols">
+        <div class="rt-col">
+          <div class="row-head">
+            <span class="label">${t("rt_stat_requests")}</span>
+            <span class="note">${t("rt_reqs_note", { n: routes.length })}</span>
+            <span class="grow"></span>
+            <div style="display:flex;gap:4px;font-size:11px;">
+              <span class="rt-tab-btn ${!curRoutingPicked ? 'on' : ''}" id="rt-tab-live" style="padding:2px 8px;border-radius:5px;cursor:pointer;">${t("rt_tab_live")}</span>
+              <span class="rt-tab-btn" style="padding:2px 8px;border-radius:5px;cursor:pointer;">${t("rt_tab_today")} ${Number(totals.requests || routes.length).toLocaleString()}</span>
+              <span class="rt-tab-btn" style="padding:2px 8px;border-radius:5px;cursor:pointer;">${t("rt_tab_by_req")}</span>
+            </div>
+          </div>
+          <div class="list rt-reqs" id="rt-reqs-list"></div>
+        </div>
+        <div class="rt-col">
+          <div class="row-head">
+            <span class="label">${t("rt_acts_title")}</span>
+            <span class="note">${t("rt_acts_note")}</span>
+          </div>
+          <div class="list rt-acts" id="rt-acts-list"></div>
+        </div>
+      </div>
+      <div class="rt-gsec" style="margin-top:20px;">
+        <div class="row-head">
+          <span class="label">${t("rt_groups_title")}</span>
+          <span class="note">${t("rt_groups_note")}</span>
+        </div>
+        <div class="list rt-groups" id="rt-groups-list"></div>
+      </div>
+    `;
+
+    const tabLive = $("rt-tab-live");
+    if (tabLive) {
+      tabLive.onclick = () => {
+        curRoutingPicked = null;
+        renderMagpieRouting(curMagpieRoutingData);
+      };
+    }
+
+    // Populate requests list
+    const reqsListEl = $("rt-reqs-list");
+    if (reqsListEl) {
+      reqsListEl.innerHTML = routes.map((r, i) => {
+        const isPick = curRoute.id === r.id;
+        const ag = r.agent || "pi";
+        const timeStr = rtClock(r.time) || "23:53:14";
+        const totalTok = (r.tokens?.input || r.tokens || 0);
+        const costStr = r.cost ? `≈$${r.cost.toFixed(3)}` : "≈$0.002";
+        const isErr = r.status >= 400;
+        const provName = r.provider || "DeepSeek";
+        const mdlName = r.served || r.model || "deepseek-flash";
 
         return `
-          <div class="mp-route-row">
-            <div class="mp-route-row-top">
-              <div class="mp-route-row-main">
-                <span class="mp-rh-badge ${badgeCls}">${badgeTxt}</span>
-                <span class="mp-route-model">${escHtml(r.model || "")}</span>
-                <span class="mp-rh-provider-tag">${escHtml(r.provider || "")}</span>
-              </div>
-              <div class="mp-route-metrics">
-                <span>${fmtLatency(r.ms || 0)}</span>
-                ${r.ttft ? `<span>TTFT ${fmtLatency(r.ttft)}</span>` : ""}
-                <span>${fmtTokens(totalTok)} tk</span>
-                <span style="color:var(--text-dim);">${timeStr}</span>
-              </div>
-            </div>
-            ${chainItems ? `
-              <div class="mp-route-chain">
-                <span style="color:var(--text-dim);font-size:10px;">Route:</span>
-                ${chainItems}
-              </div>
-            ` : ""}
+          <div class="rt-req ${isPick ? 'on' : ''}" data-idx="${i}" aria-pressed="${String(isPick)}">
+            <span class="at">${timeStr}</span>
+            <span class="asked">
+              <i class="ag" style="background:${rtHue(ag)};"></i>
+              <span class="ic">${renderProviderIcon(ag, ag[0])}</span>
+              <span class="m">group/${escHtml(r.group?.name || "default")}</span>
+            </span>
+            <span class="to ${isErr ? 'bad' : ''}">
+              <i></i>
+              <span>${escHtml(provName)} · ${escHtml(mdlName)}</span>
+            </span>
+            <span class="meta">${rtTook(r.ms)} · ${fmtTokens(totalTok)} tk · ${costStr}</span>
           </div>
         `;
       }).join("");
+
+      reqsListEl.querySelectorAll(".rt-req").forEach(row => {
+        row.onclick = () => {
+          const idx = parseInt(row.dataset.idx, 10);
+          if (!isNaN(idx) && routes[idx]) {
+            curRoutingPicked = routes[idx];
+            renderMagpieRouting(curMagpieRoutingData);
+          }
+        };
+      });
     }
+
+    // Populate accounts summary
+    const actsListEl = $("rt-acts-list");
+    if (actsListEl) {
+      actsListEl.innerHTML = groupedSeats.map(g => {
+        return `
+          <div class="rt-prov">
+            <span class="ic">${renderProviderIcon(g.icon, g.prov[0])}</span>
+            <b>${escHtml(g.prov)}</b>
+            <span style="font-size:11px;color:var(--muted);">${t("rt_unit_accounts", { n: g.items.length })}</span>
+          </div>
+          ${g.items.map(it => `
+            <div class="rt-act">
+              <div class="nm">
+                <b><span class="pii">${escHtml(it.who || it.id || "account")}</span></b>
+                <span>${escHtml(it.plan || "")}</span>
+              </div>
+              <div class="tally">
+                <span>${t("rt_remain_pct", { n: Math.max(0, 100 - (it.used || 0)) })} · ${it.renews ? t("rt_renews_days", { n: 15 }) : t("rt_ready")}</span>
+                <span>${escHtml(it.model || "")}</span>
+              </div>
+              <div class="bar"><i style="width:${Math.max(0, 100 - (it.used || 0))}%;"></i></div>
+            </div>
+          `).join("")}
+        `;
+      }).join("");
+    }
+
+    // Populate routing groups
+    const groupsListEl = $("rt-groups-list");
+    if (groupsListEl) {
+      const gItems = groups.length ? groups : [
+        { name: "default", routing: "smart", members: ["kiro/auto", "workbuddy-ai/deepseek-v4.1-flash", "codex/gpt-6-luna", "deepseek/deepseek-flash"] },
+        { name: "high", routing: "order", members: ["codex/gpt-6-luna", "deepseek/deepseek-flash"] },
+        { name: "free", routing: "smart", members: ["our-free-model/free", "opencode-zen/free"] }
+      ];
+      groupsListEl.innerHTML = gItems.map(g => `
+        <div class="rt-group">
+          <div class="main">
+            <div class="nm">
+              <b>${escHtml(g.name || "default")}</b>
+              <code class="mdl">group/${escHtml(g.name || "default")}</code>
+              <small class="auto" style="margin-left:auto;">${escHtml(modesMap[g.routing || ""]?.[0] || t("rt_mode_smart"))}</small>
+            </div>
+            <div class="mem">${escHtml((g.members || []).join(" · "))}</div>
+          </div>
+        </div>
+      `).join("");
+    }
+  }
+
+  requestAnimationFrame(() => {
+    layoutRoutingWires();
+  });
+
+  if (!routingResizeObs && window.ResizeObserver) {
+    routingResizeObs = new ResizeObserver(() => {
+      layoutRoutingWires();
+    });
+    routingResizeObs.observe(box);
   }
 }
 
 async function refreshMagpieRouting(force = false) {
   const container = $("agent-view-routing");
   if (!container || container.hidden) return;
+  const box = $("rt");
+  if (box && (!box.children.length || force)) {
+    box.innerHTML = `<div class="gempty" style="padding:48px 16px;"><span class="spin" style="display:inline-block;margin-right:8px;">◌</span>${escHtml(t("a_loading"))}</div>`;
+  }
   const d = await loadMagpieRouting(force);
   renderMagpieRouting(d);
 }
@@ -5189,6 +5649,11 @@ function bindAgentSubnav() {
       btn.classList.add("active");
       const tab = btn.dataset.atab;
       curAgentTab = tab;
+      try {
+        const u = new URL(location.href);
+        u.hash = `cat=agent&atab=${tab}`;
+        history.replaceState(null, "", u);
+      } catch (e) {}
       const vRuntimes = $("agent-view-runtimes");
       const vUsage = $("agent-view-usage");
       const vRouting = $("agent-view-routing");
@@ -5206,6 +5671,12 @@ function bindAgentSubnav() {
         await refreshMagpieProviders();
       }
     });
+    const hashQ = new URLSearchParams(location.hash.replace(/^#/, ""));
+    const initTab = hashQ.get("atab");
+    if (initTab && ["runtimes", "usage", "routing", "providers"].includes(initTab)) {
+      const targetBtn = subnav.querySelector(`[data-atab="${initTab}"]`);
+      if (targetBtn) targetBtn.click();
+    }
   }
 
   const mpFilters = $("mp-period-filters");

@@ -383,9 +383,12 @@ def sanitize_magpie_usage_for_public(usage_data: dict, lang: str = "zh") -> dict
     return clean
 
 
+_groups_cache = (0, [], [])
+_hist_cache = (0, [])
+
 def get_magpie_routing(force=False):
     """获取 Magpie 实时网关路由决策、统计与最近请求流。"""
-    global _routing_cache
+    global _routing_cache, _groups_cache, _hist_cache
     now = time.time()
     ts, cached = _routing_cache
     if not force and cached is not None and (now - ts < 8):
@@ -402,17 +405,40 @@ def get_magpie_routing(force=False):
         with urllib.request.urlopen(req_trace, timeout=4) as resp:
             trace_data = json.loads(resp.read().decode("utf-8", "ignore"))
 
-        # 2. 抓取 history (按日请求量汇总)
-        req_hist = urllib.request.Request(f"{MAGPIE_URL}/api/gateway/history", headers=headers)
-        with urllib.request.urlopen(req_hist, timeout=4) as resp:
-            hist_data = json.loads(resp.read().decode("utf-8", "ignore"))
+        # 2. 抓取 history (按日请求量汇总, 60s 缓存)
+        g_ts, days_list = _hist_cache
+        if force or not days_list or (now - g_ts > 60):
+            try:
+                req_hist = urllib.request.Request(f"{MAGPIE_URL}/api/gateway/history", headers=headers)
+                with urllib.request.urlopen(req_hist, timeout=3) as resp:
+                    hdata = json.loads(resp.read().decode("utf-8", "ignore"))
+                    days_list = hdata.get("days", [])
+                    _hist_cache = (now, days_list)
+            except Exception:
+                pass
+
+        # 3. 抓取 groups (路由组配置与池, 60s 缓存)
+        p_ts, groups_list, pools_list = _groups_cache
+        if force or not groups_list or (now - p_ts > 60):
+            try:
+                req_groups = urllib.request.Request(f"{MAGPIE_URL}/api/groups", headers=headers)
+                with urllib.request.urlopen(req_groups, timeout=3) as resp:
+                    gdata = json.loads(resp.read().decode("utf-8", "ignore"))
+                    groups_list = gdata.get("groups", [])
+                    pools_list = gdata.get("pools", [])
+                    _groups_cache = (now, groups_list, pools_list)
+            except Exception:
+                pass
 
         res = {
             "ok": True,
             "totals": trace_data.get("totals", {}),
             "now": trace_data.get("now", ""),
+            "seq": trace_data.get("seq", 0),
             "routes": trace_data.get("routes", []),
-            "days": hist_data.get("days", []),
+            "days": days_list,
+            "groups": groups_list,
+            "pools": pools_list,
             "fetched_at": now
         }
         with _cache_lock:
@@ -428,7 +454,9 @@ def get_magpie_routing(force=False):
             "err": str(e),
             "totals": {"requests": 0, "rerouted": 0, "errors": 0},
             "routes": [],
-            "days": []
+            "days": [],
+            "groups": [],
+            "pools": []
         }
 
 
@@ -496,11 +524,23 @@ def sanitize_magpie_routing_for_public(routing_data: dict, lang: str = "zh") -> 
             if r.get("conv") and len(str(r["conv"])) > 16:
                 r["conv"] = r["conv"][:8] + "..." + r["conv"][-4:]
             for o in r.get("order") or []:
-                if isinstance(o, dict) and o.get("id"):
-                    o["id"] = _mask_email(str(o["id"]))
+                if isinstance(o, dict):
+                    if o.get("id"):
+                        o["id"] = _mask_email(str(o["id"]))
+                    if o.get("who"):
+                        o["who"] = _mask_email(str(o["who"]))
             for l in r.get("left") or []:
-                if isinstance(l, dict) and l.get("id"):
-                    l["id"] = _mask_email(str(l["id"]))
+                if isinstance(l, dict):
+                    if l.get("id"):
+                        l["id"] = _mask_email(str(l["id"]))
+                    if l.get("who"):
+                        l["who"] = _mask_email(str(l["who"]))
+            for tr in r.get("tries") or []:
+                if isinstance(tr, dict):
+                    if tr.get("id"):
+                        tr["id"] = _mask_email(str(tr["id"]))
+                    if tr.get("who"):
+                        tr["who"] = _mask_email(str(tr["who"]))
             if r.get("prompt") and isinstance(r["prompt"], dict):
                 parts = r["prompt"].get("parts") or []
                 for p in parts:
