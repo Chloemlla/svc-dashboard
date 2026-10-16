@@ -32,6 +32,7 @@ DOTFILES_AGENT = HOME + "/dotfiles/agent"
 QUOTA_SCRIPT = HOME + "/.config/agent/tools/agent-quota.sh"
 if not os.path.isfile(QUOTA_SCRIPT):
     QUOTA_SCRIPT = DOTFILES_AGENT + "/agent-quota.sh"
+QUOTA_CACHE_PATH = os.path.join(HOME, ".cache", "svc-dashboard", "agent-quota-cache.json")
 LEDGER_DIR = HOME + "/.omp/svc-dashboard"
 LEDGER_FILE = LEDGER_DIR + "/agentctl.json"
 _CLK_TCK = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
@@ -564,12 +565,26 @@ def refresh_quota(force=False):
                         parsed[provider] = {"ok": False, "account": "", "plan": "",
                                             "buckets": [], "detail": "parse error"}
             _quota["data"] = parsed
+            try:
+                os.makedirs(os.path.dirname(QUOTA_CACHE_PATH), exist_ok=True)
+                with open(QUOTA_CACHE_PATH, "w", encoding="utf-8") as f:
+                    json.dump({"t": _quota["t"], "data": parsed}, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
     threading.Thread(target=_work, daemon=True).start()
 
 
 def quota_snapshot():
     """{"providers": {...}, "updated": ts, "running": bool, "err": str}"""
     with _quota["lock"]:
+        if _quota["data"] is None and os.path.isfile(QUOTA_CACHE_PATH):
+            try:
+                with open(QUOTA_CACHE_PATH, "r", encoding="utf-8") as f:
+                    cd = json.load(f)
+                    _quota["data"] = cd.get("data")
+                    _quota["t"] = cd.get("t") or 0.0
+            except Exception:
+                pass
         return {"providers": _quota["data"] or {}, "updated": _quota["t"],
                 "running": _quota["running"], "err": _quota["err"]}
 

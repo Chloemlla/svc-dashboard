@@ -4,12 +4,13 @@ from svcdash.goals import watchdog_goals, parse_completed_goals
 from svcdash.agents import scan_omp, scan_codex
 from svcdash.i18n import t, DEFAULT_LANG
 # ---------------- 仓库层: development git 仓库 + agent/goal 改动仓库 ----------------
-# 仓库集合包括 ~/development 下的 Git 项目，也补充 development 外的
-# watchdog GOALS / 完成台账 / OMP 和 Codex 当前工作仓库。只跳过依赖与缓存目录。
+# 仓库集合包括 ~/development 下的 Git 项目，也补充 Hermes worktree 与
+# agent/goal 使用过的仓库根。只跳过依赖与缓存目录。
 # 提交事件(git log)60s 缓存;仓库统计600s缓存并异步刷新,
 # /api/repos?refresh=1 按需强制重算。
 
 _DEVELOPMENT_ROOT = "/home/tetsuya/development"
+_HERMES_WORKTREES_ROOT = "/home/tetsuya/.hermes/worktrees"
 _REPO_SKIP_DIRS = {".git", ".hg", ".svn", ".venv", "venv", "node_modules",
                    "__pycache__", ".pytest_cache", ".mypy_cache", ".tox",
                    "target", "build", "dist", "vendor"}
@@ -27,7 +28,9 @@ def _load_repo_events_snapshot():
     try:
         data = json.loads(_REPO_EVENTS_PATH.read_text())
         if isinstance(data, dict) and isinstance(data.get("events"), list):
-            _repo_ev_cache.update({"t": time.time(), "data": data["events"],
+            updated = data.get("updated")
+            snapshot_time = float(updated) if isinstance(updated, (int, float)) else 0.0
+            _repo_ev_cache.update({"t": snapshot_time, "data": data["events"],
                                    "paths": data.get("paths") or []})
     except (OSError, ValueError, TypeError):
         pass
@@ -49,7 +52,9 @@ def _load_repo_stats_snapshot():
     try:
         data = json.loads(_REPO_STATS_PATH.read_text())
         if isinstance(data, dict) and isinstance(data.get("repos"), list):
-            _repo_stats_cache.update({"t": time.time(), "data": data})
+            updated = data.get("updated")
+            snapshot_time = float(updated) if isinstance(updated, (int, float)) else 0.0
+            _repo_stats_cache.update({"t": snapshot_time, "data": data})
     except (OSError, ValueError, TypeError):
         pass
 
@@ -111,16 +116,27 @@ def agent_repos():
     if _repo_set_cache["repos"] is not None and now - _repo_set_cache["t"] < 60:
         return _repo_set_cache["repos"]
     roots = {}
-    if os.path.isdir(_DEVELOPMENT_ROOT):
-        for current, dirs, _files in os.walk(_DEVELOPMENT_ROOT, followlinks=False):
-            if ".git" in dirs:
-                repo = os.path.realpath(current)
-                try:
-                    roots[repo] = os.path.getmtime(os.path.join(current, ".git"))
-                except OSError:
-                    roots[repo] = 0.0
-                dirs.remove(".git")
-            dirs[:] = [d for d in dirs if d not in _REPO_SKIP_DIRS]
+    for scan_root in (_DEVELOPMENT_ROOT, _HERMES_WORKTREES_ROOT):
+        if os.path.isdir(scan_root):
+            for current, dirs, _files in os.walk(scan_root, followlinks=False):
+                if ".git" in dirs or os.path.isfile(os.path.join(current, ".git")):
+                    repo = os.path.realpath(current)
+                    try:
+                        roots[repo] = os.path.getmtime(os.path.join(current, ".git"))
+                    except OSError:
+                        roots[repo] = 0.0
+                    dirs.remove(".git") if ".git" in dirs else None
+                dirs[:] = [d for d in dirs if d not in _REPO_SKIP_DIRS]
+    # Linked worktrees share one common Git directory and should appear as one repo.
+    grouped = {}
+    for repo, mtime in roots.items():
+        common = _git(repo, ["rev-parse", "--git-common-dir"]).strip()
+        common = os.path.realpath(os.path.join(repo, common)) if common else repo
+        current = grouped.get(common)
+        if current is None or (repo.startswith(_DEVELOPMENT_ROOT + os.sep)
+                               and not current[0].startswith(_DEVELOPMENT_ROOT + os.sep)):
+            grouped[common] = (repo, mtime)
+    roots = {repo: mtime for repo, mtime in grouped.values()}
     discovered_roots = set(roots)
     dirs = []
     for g in watchdog_goals().values():
@@ -155,13 +171,18 @@ def parse_repo_commits(per_repo=30, total=150):
         now = time.time()
         if _repo_ev_cache["data"] is None:
             _load_repo_events_snapshot()
-        if _repo_ev_cache["data"] is not None and now - _repo_ev_cache["t"] < 300:
+        # Reload the snapshot on each request so a separate publisher process
+        # can observe updates, then refresh once the persisted sample is stale.
+        if _repo_ev_cache["data"] is not None:
+            _load_repo_events_snapshot()
+        if _repo_ev_cache["data"] is not None and now - _repo_ev_cache["t"] < 60:
             return _repo_ev_cache["data"]
         repos = agent_repos()
         out = []
+        seen_commits = set()
         for repo in repos:
             name = os.path.basename(repo.rstrip("/"))
-            text = _git(repo, ["log", "-n", str(per_repo), "--name-status",
+            text = _git(repo, ["log", "--all", "-n", str(per_repo), "--name-status",
                                "--format=COMMIT%x1f%h%x1f%ct%x1f%s%x1f%an"])
             cur = None
             for raw_line in text.splitlines():
@@ -176,6 +197,10 @@ def parse_repo_commits(per_repo=30, total=150):
                         cur = None
                         continue
                     _, h, ct, subj, author = parts
+                    if h in seen_commits:
+                        cur = None
+                        continue
+                    seen_commits.add(h)
                     try:
                         ts = float(ct)
                     except ValueError:
@@ -214,10 +239,13 @@ def parse_repo_commits(per_repo=30, total=150):
 def _repo_one_stats(repo, include_traj=False):
     """轻量仓库索引;完整轨迹仅在打开仓库详情时计算。"""
     st = {"name": os.path.basename(repo.rstrip("/")), "path": repo,
-          "branch": _git(repo, ["rev-parse", "--abbrev-ref", "HEAD"]).strip() or "—"}
+          "branch": _git(repo, ["rev-parse", "--abbrev-ref", "HEAD"]).strip() or "—",
+          "branches": 0}
+    branches = _git(repo, ["branch", "--format=%(refname:short)"]).splitlines()
+    st["branches"] = len(branches)
     cnt = _git(repo, ["rev-list", "--count", "HEAD"]).strip()
     st["commits"] = int(cnt) if cnt.isdigit() else None
-    parts = _git(repo, ["log", "-1", "--format=%h%x1f%ct%x1f%s%x1f%an"]).strip().split("\x1f")
+    parts = _git(repo, ["log", "--all", "-1", "--format=%h%x1f%ct%x1f%s%x1f%an"]).strip().split("\x1f")
     if len(parts) == 4 and parts[1].isdigit():
         ts = int(parts[1])
         st["last"] = {"hash": parts[0], "ts": ts,
@@ -453,7 +481,7 @@ def _traj_data(repo):
     if cached and now - _traj_cache["t"] < 60:
         return cached
     evs = []
-    for line in _git(repo, ["log", "-n", "400", "--format=%h%x1f%ct%x1f%s"]).splitlines():
+    for line in _git(repo, ["log", "--all", "-n", "400", "--format=%h%x1f%ct%x1f%s"]).splitlines():
         parts = line.split("\x1f")
         if len(parts) != 3:
             continue

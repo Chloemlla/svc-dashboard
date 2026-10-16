@@ -210,7 +210,7 @@ def _cron_last_runs():
     try:
         p = subprocess.Popen(
             ["journalctl", "-u", "cron", "-o", "short-iso", "--no-pager",
-             "--since", "7 days ago"],
+             "--since", "7 days ago", "--quiet"],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             text=True, errors="replace", start_new_session=True)
     except Exception:

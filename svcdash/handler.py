@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """svcdash HTTP 处理器: HTTP/1.1 keep-alive + gzip + 静态 ETag/304 + 壳 ETag。
 路由与旧版逐端点对齐(golden diff 校验)。"""
-import gzip, hashlib, hmac, ipaddress, json, os, re, secrets, socket, time
+import gzip, hashlib, hmac, ipaddress, json, os, re, secrets, socket, subprocess, time
 from html import escape
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
@@ -20,6 +20,7 @@ _STATIC_CACHE = {}   # relpath -> (raw_bytes, gz_bytes, etag)
 _TOKEN_PATHS = ("/etc/svc-dashboard/token",
                 os.path.expanduser("~/.omp/svc-dashboard/token"))
 _token_cache = {"mtime": None, "val": ""}
+
 
 
 def _token_file():
@@ -186,8 +187,10 @@ class Handler(BaseHTTPRequestHandler):
         else:
             payload, enc = raw, None
         ctype = "text/css; charset=utf-8" if relpath.endswith(".css") else (
-                "application/javascript; charset=utf-8" if relpath.endswith(".js") else
-                "application/octet-stream")
+                "application/javascript; charset=utf-8" if relpath.endswith(".js") else (
+                "image/svg+xml" if relpath.endswith(".svg") else (
+                "image/webp" if relpath.endswith(".webp") else (
+                "image/png" if relpath.endswith(".png") else "application/octet-stream"))))
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Cache-Control", "public, max-age=31536000, immutable")
@@ -344,6 +347,20 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/tailscale":
             from . import tailscale
             self._send_json(200, tailscale.get_tailscale_status())
+        elif path == "/api/magpie/usage":
+            from . import magpie
+            qs = parse_qs(urlparse(self.path).query)
+            period = (qs.get("period") or ["today"])[0]
+            self._send_json(200, magpie.get_magpie_usage(period))
+        elif path == "/api/magpie/quotas":
+            from . import magpie
+            self._send_json(200, magpie.get_magpie_quotas())
+        elif path == "/api/magpie/routing":
+            from . import magpie
+            self._send_json(200, magpie.get_magpie_routing())
+        elif path == "/api/magpie/providers":
+            from . import magpie
+            self._send_json(200, magpie.get_magpie_providers())
         else:
             self.send_error(404)
 
@@ -385,7 +402,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ("/api/manage", "/api/cleanup", "/api/aicleanup", "/api/uservice", "/api/svcctl", "/api/runtimes", "/api/models", "/api/goalresume", "/api/tmux/wake", "/api/tailscale/ping", "/api/tailscale/netcheck", "/api/tasks/run"):
+        if path not in ("/api/manage", "/api/cleanup", "/api/aicleanup", "/api/uservice", "/api/svcctl", "/api/runtimes", "/api/models", "/api/goalresume", "/api/tmux/wake", "/api/tmux/new", "/api/tmux/kill", "/api/tmux/send", "/api/tailscale/ping", "/api/tailscale/netcheck", "/api/tasks/run"):
             self.send_error(404)
             return
         # 先消费请求体再鉴权: 403(跨站/无token)提前返回时若 body 残留在
@@ -542,6 +559,39 @@ class Handler(BaseHTTPRequestHandler):
                         self._send_json(200, {"ok": False, "msg": t(lang, "mm_task_trigger_fail", e=err[:120])})
                 else:
                     self._send_json(200, {"ok": True, "msg": t(lang, "mm_task_cron_ok", name=name)})
+            except Exception as e:
+                self._send_json(500, {"ok": False, "msg": f"server error: {e}"})
+        elif path == "/api/tmux/new":
+            agent_type = str(body.get("agent") or "bash").strip()
+            cwd = str(body.get("cwd") or "").strip()
+            name = str(body.get("name") or "").strip()
+            prompt = str(body.get("prompt") or "").strip()
+            self.log_message("tmux_new agent=%s name=%s cwd=%s", agent_type, name, cwd)
+            try:
+                ok, res = agents.tmux_new_session(agent_type, cwd, name, prompt, lang)
+                if ok:
+                    self._send_json(200, {"ok": True, "session": res["session"], "target": res["target"]})
+                else:
+                    self._send_json(400, {"ok": False, "msg": str(res)})
+            except Exception as e:
+                self._send_json(500, {"ok": False, "msg": f"server error: {e}"})
+        elif path == "/api/tmux/kill":
+            session = str(body.get("session") or "").strip()
+            self.log_message("tmux_kill session=%s", session)
+            try:
+                ok, msg = agents.tmux_kill_session(session, lang)
+                self._send_json(200 if ok else 400, {"ok": ok, "msg": msg})
+            except Exception as e:
+                self._send_json(500, {"ok": False, "msg": f"server error: {e}"})
+        elif path == "/api/tmux/send":
+            target = str(body.get("target") or body.get("session") or "").strip()
+            text = str(body.get("text") or "")
+            enter = bool(body.get("enter", True))
+            key = str(body.get("key") or "").strip()
+            self.log_message("tmux_send target=%s key=%s text_len=%d", target, key, len(text))
+            try:
+                ok, msg = agents.tmux_send_input(target, text, enter, key, lang)
+                self._send_json(200 if ok else 400, {"ok": ok, "msg": msg})
             except Exception as e:
                 self._send_json(500, {"ok": False, "msg": f"server error: {e}"})
 

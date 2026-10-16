@@ -1,0 +1,537 @@
+"""svcdash/magpie.py — Magpie 网关用量与配额同步模块
+
+从本机 Magpie Web 实例 (http://127.0.0.1:3426) 提取 Token 消耗、费用、模型/智能体统计与配额数据。
+支持：
+1. 动态探测本地 MAGPIE_WEB_KEY（环境 / systemd user unit / proc）
+2. 聚合调用量、费用($)、输入/输出/推理/缓存 Token、TTFT/解码速率、小时趋势
+3. 内存缓存（防频刷，today 15s / 7d 60s / 30d 120s）
+4. 公网静态导出脱敏（保留模型、Token、费用与宏观趋势，打码账号敏感邮箱）
+"""
+
+import json
+import os
+import re
+import threading
+import time
+import urllib.request
+from datetime import datetime, timezone
+from svcdash.privacy import red
+
+MAGPIE_PORT = 3426
+MAGPIE_URL = f"http://127.0.0.1:{MAGPIE_PORT}"
+HOME = os.environ.get("SUDO_USER_HOME") or "/home/tetsuya"
+
+_cache_lock = threading.Lock()
+_usage_cache = {}  # period -> (timestamp, data)
+_quotas_cache = (0.0, None)
+_routing_cache = (0.0, None)
+_providers_cache = (0.0, None)
+
+_cached_key = None
+_cached_key_time = 0.0
+
+
+def _discover_magpie_key():
+    """获取访问 Magpie Web API 所需的验证 Key。"""
+    global _cached_key, _cached_key_time
+    now = time.time()
+    if _cached_key and (now - _cached_key_time < 300):
+        return _cached_key
+
+    # 1. 环境变量
+    k = os.environ.get("MAGPIE_WEB_KEY")
+    if k:
+        _cached_key = k
+        _cached_key_time = now
+        return k
+
+    # 2. 从 systemd user unit 文件读取
+    svc_paths = [
+        f"{HOME}/.config/systemd/user/magpie-web.service",
+        os.path.expanduser("~/.config/systemd/user/magpie-web.service"),
+    ]
+    for p in svc_paths:
+        if os.path.isfile(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    for line in f:
+                        m = re.match(r"^Environment=MAGPIE_WEB_KEY=([^\s]+)", line.strip())
+                        if m:
+                            _cached_key = m.group(1).strip()
+                            _cached_key_time = now
+                            return _cached_key
+            except Exception:
+                pass
+
+    # 3. 从运行中进程的 /proc/<pid>/environ 读取
+    try:
+        import subprocess
+        out = subprocess.check_output(["pgrep", "-f", "magpie web"], timeout=1).decode().strip().split()
+        for pid in out:
+            env_file = f"/proc/{pid}/environ"
+            if os.path.isfile(env_file):
+                with open(env_file, "rb") as f:
+                    for item in f.read().split(b"\0"):
+                        if item.startswith(b"MAGPIE_WEB_KEY="):
+                            _cached_key = item.split(b"=", 1)[1].decode("utf-8", "ignore").strip()
+                            _cached_key_time = now
+                            return _cached_key
+    except Exception:
+        pass
+
+    return ""
+
+
+def get_magpie_usage(period="today", force=False):
+    """获取指定时间段的 Magpie 流量用量统计数据 (today / 7d / 30d / all)。"""
+    if period not in ("today", "7d", "30d", "all"):
+        period = "today"
+
+    ttl = 15 if period == "today" else 60 if period == "7d" else 120
+    now = time.time()
+
+    with _cache_lock:
+        if not force and period in _usage_cache:
+            ts, val = _usage_cache[period]
+            if now - ts < ttl:
+                return val
+
+    key = _discover_magpie_key()
+    url = f"{MAGPIE_URL}/api/usage?period={period}"
+    headers = {"User-Agent": "svc-dashboard/1.0"}
+    if key:
+        headers["Cookie"] = f"magpie_web_{MAGPIE_PORT}={key}"
+
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = json.loads(resp.read().decode("utf-8", "ignore"))
+            # 补充状态标记
+            data["ok"] = True
+            data["fetched_at"] = now
+            try:
+                data["quotas"] = get_magpie_quotas(force=force)
+            except Exception:
+                data["quotas"] = []
+            with _cache_lock:
+                _usage_cache[period] = (now, data)
+            return data
+    except Exception as e:
+        with _cache_lock:
+            if period in _usage_cache:
+                old_ts, old_data = _usage_cache[period]
+                res = dict(old_data)
+                res["stale"] = True
+                if not res.get("quotas"):
+                    try:
+                        res["quotas"] = get_magpie_quotas(force=False)
+                    except Exception:
+                        pass
+                return res
+
+        try:
+            fallback_quotas = get_magpie_quotas(force=False)
+        except Exception:
+            fallback_quotas = []
+
+        return {
+            "ok": False,
+            "period": period,
+            "err": str(e),
+            "calls": 0,
+            "cost": 0,
+            "input": 0,
+            "output": 0,
+            "cache_read": 0,
+            "reasoning": 0,
+            "agents": [],
+            "models": [],
+            "series": [],
+            "accounts": [],
+            "quotas": fallback_quotas,
+        }
+
+
+def _get_local_agent_quotas() -> list:
+    """获取本机智能体 (Antigravity, dim 等) 的配额信息，转换为统一配额卡片结构。"""
+    try:
+        from svcdash import runtimes
+        # 触发后台刷新（若缓存过期）
+        runtimes.refresh_quota(force=False)
+        qs = runtimes.quota_snapshot()
+        providers_data = qs.get("providers") or {}
+    except Exception:
+        providers_data = {}
+
+    local_cards = []
+
+    # 1. Antigravity (Gemini & Claude/GPT)
+    agy = providers_data.get("agy")
+    if agy and agy.get("ok"):
+        user = agy.get("account") or "iamcheyan@gmail.com"
+        windows = []
+        for b in agy.get("buckets") or []:
+            lbl = b.get("label") or ""
+            lbl_low = lbl.lower()
+            if "gemini-5h" in lbl_low or ("5h" in lbl_low and "gemini" in lbl_low):
+                name = "Gemini 5h"
+            elif "gemini-weekly" in lbl_low or ("weekly" in lbl_low and "gemini" in lbl_low):
+                name = "Gemini Weekly"
+            elif "3p-5h" in lbl_low or ("5h" in lbl_low and ("claude" in lbl_low or "3p" in lbl_low)):
+                name = "Claude / GPT 5h"
+            elif "3p-weekly" in lbl_low or ("weekly" in lbl_low and ("claude" in lbl_low or "3p" in lbl_low)):
+                name = "Claude / GPT Weekly"
+            else:
+                name = lbl.split("·")[-1].strip() if "·" in lbl else lbl
+
+            rem_pct = b.get("remaining_pct")
+            used_pct = round(100.0 - float(rem_pct), 1) if rem_pct is not None else 0.0
+
+            w = {
+                "name": name,
+                "used": used_pct,
+            }
+            if b.get("reset_ts"):
+                try:
+                    w["resetsAt"] = datetime.fromtimestamp(b["reset_ts"], timezone.utc).isoformat()
+                except Exception:
+                    pass
+            elif b.get("reset"):
+                w["resetsAt"] = b["reset"]
+
+            windows.append(w)
+
+        if windows:
+            order_map = {"Gemini 5h": 1, "Gemini Weekly": 2, "Claude / GPT 5h": 3, "Claude / GPT Weekly": 4}
+            windows.sort(key=lambda x: order_map.get(x["name"], 99))
+            local_cards.append({
+                "provider": "antigravity",
+                "name": "Antigravity",
+                "icon": "spark",
+                "plan": "Google Cloud Code",
+                "user": user,
+                "windows": windows,
+                "readAt": datetime.now(timezone.utc).isoformat()
+            })
+
+    # 2. dim (Credits)
+    dim = providers_data.get("dim")
+    if dim and dim.get("ok"):
+        user = dim.get("account") or (agy.get("account") if agy else "") or "iamcheyan@gmail.com"
+        windows = []
+        for b in dim.get("buckets") or []:
+            rem_pct = b.get("remaining_pct")
+            used_pct = round(100.0 - float(rem_pct), 1) if rem_pct is not None else 0.0
+            detail = b.get("detail") or ""
+            
+            m = re.search(r"(\d+)/(\d+)", detail)
+            used_val = float(m.group(1)) if m else None
+            lim_val = float(m.group(2)) if m else None
+            rem_val = (lim_val - used_val) if (lim_val and used_val is not None) else None
+
+            w = {
+                "name": "Credits",
+                "used": used_pct,
+            }
+            if used_val is not None and lim_val is not None:
+                w["display"] = f"{int(used_val):,} / {int(lim_val):,}"
+                w["amount"] = used_val
+                w["limit"] = lim_val
+                w["unit"] = "credits"
+            if rem_val is not None:
+                w["runsOut"] = rem_val
+
+            if b.get("reset_ts"):
+                try:
+                    iso_r = datetime.fromtimestamp(b["reset_ts"], timezone.utc).isoformat()
+                    w["resetsAt"] = iso_r
+                    w["runsOutAt"] = iso_r
+                except Exception:
+                    pass
+            elif b.get("reset"):
+                w["resetsAt"] = b["reset"]
+                w["runsOutAt"] = b["reset"]
+
+            windows.append(w)
+
+        if windows:
+            local_cards.append({
+                "provider": "dim",
+                "name": "dim",
+                "icon": "cpu",
+                "plan": "Subscription",
+                "user": user,
+                "windows": windows,
+                "readAt": datetime.now(timezone.utc).isoformat()
+            })
+
+    return local_cards
+
+
+def get_magpie_quotas(force=False):
+    """获取 Magpie 实时配额与余额信息，并合并本机智能体配额。"""
+    global _quotas_cache
+    now = time.time()
+    with _cache_lock:
+        ts, val = _quotas_cache
+        if not force and val is not None and now - ts < 30:
+            return val
+
+    key = _discover_magpie_key()
+    url = f"{MAGPIE_URL}/api/usage/quotas"
+    headers = {"User-Agent": "svc-dashboard/1.0"}
+    if key:
+        headers["Cookie"] = f"magpie_web_{MAGPIE_PORT}={key}"
+
+    req = urllib.request.Request(url, headers=headers)
+    data = []
+    try:
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = json.loads(resp.read().decode("utf-8", "ignore"))
+    except Exception:
+        # 回退：读取本地 quotas.json
+        qfile = f"{HOME}/.config/magpie/quotas.json"
+        if os.path.isfile(qfile):
+            try:
+                with open(qfile, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                data = []
+
+    # 合并本机智能体配额 (Antigravity, dim 等置顶)
+    local_cards = _get_local_agent_quotas()
+    merged = list(local_cards)
+    for q in (data or []):
+        prov = (q.get("provider") or "").lower()
+        if prov not in ("agy", "antigravity", "dim"):
+            merged.append(q)
+
+    with _cache_lock:
+        _quotas_cache = (now, merged)
+    return merged
+
+
+def _mask_email(s: str) -> str:
+    """脱敏邮箱或包含邮箱的字符串。"""
+    if not isinstance(s, str):
+        return s
+
+    def _sub(m):
+        user, domain = m.group(1), m.group(2)
+        if len(user) <= 2:
+            masked_user = user[0] + "***"
+        else:
+            masked_user = user[:2] + "***" + user[-1]
+        return f"{masked_user}@{domain}"
+
+    return re.sub(r"([a-zA-Z0-9_.+-]+)@([a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)", _sub, s)
+
+
+def sanitize_magpie_usage_for_public(usage_data: dict, lang: str = "zh") -> dict:
+    """对静态公开版中的 Magpie 流量看板进行安全脱敏：
+    - 保留总调用量、费用($)、输入/输出/推理/缓存 Token、小时序列、延迟和模型/智能体名称
+    - 对用户个人邮箱、账号标识与底层绝对路径进行打码脱敏
+    """
+    if not isinstance(usage_data, dict):
+        return usage_data
+
+    clean = json.loads(json.dumps(usage_data, ensure_ascii=False))
+
+    # 1. 路径隐藏
+    if "path" in clean:
+        clean["path"] = "~/.config/magpie/usage.jsonl"
+
+    # 2. 账号列表脱敏 (accounts)
+    if "accounts" in clean and isinstance(clean["accounts"], list):
+        for acc in clean["accounts"]:
+            if isinstance(acc, dict):
+                raw_act = acc.get("account") or ""
+                raw_name = acc.get("name") or ""
+                acc["account"] = _mask_email(raw_act)
+                acc["name"] = _mask_email(raw_name)
+                acc["id"] = _mask_email(acc.get("id") or "")
+
+    # 3. 模型列表脱敏 (models 中的 host / sub)
+    if "models" in clean and isinstance(clean["models"], list):
+        for m in clean["models"]:
+            if isinstance(m, dict):
+                if m.get("host"):
+                    m["host"] = _mask_email(m["host"])
+                if m.get("sub"):
+                    m["sub"] = _mask_email(m["sub"])
+
+    # 4. Caller Keys 脱敏
+    if "callerKeys" in clean and isinstance(clean["callerKeys"], list):
+        for k in clean["callerKeys"]:
+            if isinstance(k, dict):
+                cid = k.get("callerKeyId") or k.get("id") or ""
+                if len(cid) > 8:
+                    k["callerKeyId"] = cid[:4] + "..." + cid[-4:]
+                    k["id"] = k["callerKeyId"]
+
+    # 5. Quotas 脱敏 (按账号 user 邮箱脱敏)
+    if "quotas" in clean and isinstance(clean["quotas"], list):
+        for q in clean["quotas"]:
+            if isinstance(q, dict):
+                if q.get("user"):
+                    q["user"] = _mask_email(q["user"])
+                if q.get("accounts") and isinstance(q["accounts"], list):
+                    for acc in q["accounts"]:
+                        if isinstance(acc, dict) and acc.get("user"):
+                            acc["user"] = _mask_email(acc["user"])
+
+    return clean
+
+
+def get_magpie_routing(force=False):
+    """获取 Magpie 实时网关路由决策、统计与最近请求流。"""
+    global _routing_cache
+    now = time.time()
+    ts, cached = _routing_cache
+    if not force and cached is not None and (now - ts < 8):
+        return cached
+
+    key = _discover_magpie_key()
+    headers = {"User-Agent": "svc-dashboard/1.0"}
+    if key:
+        headers["Cookie"] = f"magpie_web_{MAGPIE_PORT}={key}"
+
+    try:
+        # 1. 抓取 trace (最近 60 条路由及 totals)
+        req_trace = urllib.request.Request(f"{MAGPIE_URL}/api/gateway/trace?after=0", headers=headers)
+        with urllib.request.urlopen(req_trace, timeout=4) as resp:
+            trace_data = json.loads(resp.read().decode("utf-8", "ignore"))
+
+        # 2. 抓取 history (按日请求量汇总)
+        req_hist = urllib.request.Request(f"{MAGPIE_URL}/api/gateway/history", headers=headers)
+        with urllib.request.urlopen(req_hist, timeout=4) as resp:
+            hist_data = json.loads(resp.read().decode("utf-8", "ignore"))
+
+        res = {
+            "ok": True,
+            "totals": trace_data.get("totals", {}),
+            "now": trace_data.get("now", ""),
+            "routes": trace_data.get("routes", []),
+            "days": hist_data.get("days", []),
+            "fetched_at": now
+        }
+        with _cache_lock:
+            _routing_cache = (now, res)
+        return res
+    except Exception as e:
+        if cached is not None:
+            c = dict(cached)
+            c["stale"] = True
+            return c
+        return {
+            "ok": False,
+            "err": str(e),
+            "totals": {"requests": 0, "rerouted": 0, "errors": 0},
+            "routes": [],
+            "days": []
+        }
+
+
+def get_magpie_providers(force=False):
+    """获取 Magpie 供应商列表、预设、多账号及模型清单。"""
+    global _providers_cache
+    now = time.time()
+    ts, cached = _providers_cache
+    if not force and cached is not None and (now - ts < 30):
+        return cached
+
+    key = _discover_magpie_key()
+    headers = {"User-Agent": "svc-dashboard/1.0"}
+    if key:
+        headers["Cookie"] = f"magpie_web_{MAGPIE_PORT}={key}"
+
+    try:
+        req = urllib.request.Request(f"{MAGPIE_URL}/api/providers", headers=headers)
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = json.loads(resp.read().decode("utf-8", "ignore"))
+
+        provs = data.get("providers", [])
+        for p in provs:
+            models = p.get("models") or []
+            active_cnt = len([m for m in models if isinstance(m, dict) and m.get("on")])
+            p["active_models_count"] = active_cnt if active_cnt > 0 else len(models)
+            p.pop("models", None)
+            p.pop("catalog", None)
+            p.pop("searchModels", None)
+            p.pop("drawIds", None)
+            if "agents" in p and isinstance(p["agents"], list):
+                p["agents"] = [
+                    {"id": a.get("id"), "name": a.get("name"), "icon": a.get("icon"), "current": bool(a.get("current"))}
+                    for a in p["agents"] if isinstance(a, dict) and a.get("current")
+                ]
+
+        res = {
+            "ok": True,
+            "providers": provs,
+            "presets": {},
+            "fetched_at": now
+        }
+        with _cache_lock:
+            _providers_cache = (now, res)
+        return res
+    except Exception as e:
+        if cached is not None:
+            c = dict(cached)
+            c["stale"] = True
+            return c
+        return {"ok": False, "err": str(e), "providers": [], "presets": {}}
+
+
+def sanitize_magpie_routing_for_public(routing_data: dict, lang: str = "zh") -> dict:
+    """脱敏公开路由数据：打码请求中涉及的邮箱与敏感账号标识，保留 Token、延迟、耗时树与宏观指标。"""
+    if not isinstance(routing_data, dict):
+        return routing_data
+    clean = json.loads(json.dumps(routing_data, ensure_ascii=False))
+
+    routes = clean.get("routes", [])
+    if isinstance(routes, list):
+        for r in routes:
+            if not isinstance(r, dict):
+                continue
+            if r.get("conv") and len(str(r["conv"])) > 16:
+                r["conv"] = r["conv"][:8] + "..." + r["conv"][-4:]
+            for o in r.get("order") or []:
+                if isinstance(o, dict) and o.get("id"):
+                    o["id"] = _mask_email(str(o["id"]))
+            for l in r.get("left") or []:
+                if isinstance(l, dict) and l.get("id"):
+                    l["id"] = _mask_email(str(l["id"]))
+            if r.get("prompt") and isinstance(r["prompt"], dict):
+                parts = r["prompt"].get("parts") or []
+                for p in parts:
+                    if isinstance(p, dict) and p.get("items"):
+                        for item in p.get("items") or []:
+                            if isinstance(item, dict) and item.get("name"):
+                                raw_n = str(item["name"])
+                                if "/" in raw_n or "\\" in raw_n:
+                                    item["name"] = os.path.basename(raw_n) or "file"
+
+    return clean
+
+
+def sanitize_magpie_providers_for_public(providers_data: dict, lang: str = "zh") -> dict:
+    """脱敏公开供应商数据：打码个人邮箱与登录凭据，保留模型、配额类型与开关状态。"""
+    if not isinstance(providers_data, dict):
+        return providers_data
+    clean = json.loads(json.dumps(providers_data, ensure_ascii=False))
+
+    for p in clean.get("providers", []):
+        if not isinstance(p, dict):
+            continue
+        p.pop("proxy", None)
+        p.pop("authHeader", None)
+        acc = p.get("account")
+        if isinstance(acc, dict):
+            if acc.get("user"):
+                acc["user"] = _mask_email(str(acc["user"]))
+            for l in acc.get("logins") or []:
+                if isinstance(l, dict) and l.get("user"):
+                    l["user"] = _mask_email(str(l["user"]))
+
+    return clean
+

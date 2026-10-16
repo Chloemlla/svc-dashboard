@@ -5,3 +5,4 @@ dashboard.py.bak-*
 *.bak-
 screenshots/
 docs/screenshots/
+.hermes/

@@ -1,4 +1,4 @@
-import glob, json, os, re, subprocess, time
+import glob, json, os, re, secrets, subprocess, time
 from datetime import datetime
 from svcdash.i18n import t, DEFAULT_LANG
 # ---------------- OMP Goal 状态 ----------------
@@ -239,20 +239,27 @@ _tmux_cache = {"t": 0.0, "data": None}
 _tmux_full_cache = {"t": 0.0, "data": None}
 
 
-def _tmux_run(args, timeout=2):
-    """以当前用户跑 tmux 子命令;root 时降级 sudo -u tetsuya(输出为空才降级)。"""
-    cmd = ["tmux"] + args
+def _tmux_exec(args, timeout=5):
+    """以 tetsuya 用户跑 tmux 命令(若当前为 root 则通过 sudo -n -u tetsuya)。
+    返回 (ok: bool, output/err: str)。"""
+    cmd = (["sudo", "-n", "-u", "tetsuya", "tmux"] if os.geteuid() == 0 else ["tmux"]) + args
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout).stdout
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        out = (p.stdout or "").strip()
+        err = (p.stderr or "").strip()
+        return p.returncode == 0, out if p.returncode == 0 else (err or out)
+    except Exception as e:
+        return False, str(e)
+
+
+def _tmux_run(args, timeout=3):
+    """以 tetsuya 身份跑 tmux 子命令，返回 stdout 文本。"""
+    cmd = (["sudo", "-n", "-u", "tetsuya", "tmux"] if os.geteuid() == 0 else ["tmux"]) + args
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout).stdout or ""
     except (OSError, subprocess.SubprocessError):
         return ""
-    if not out.strip() and os.geteuid() == 0:
-        try:
-            out = subprocess.run(["sudo", "-n", "-u", "tetsuya"] + cmd,
-                                 capture_output=True, text=True, timeout=timeout).stdout
-        except (OSError, subprocess.SubprocessError):
-            return ""
-    return out
+
 
 
 def scan_tmux():
@@ -695,5 +702,101 @@ def tmux_wake_session(session_name: str, pane: str = "", lang=DEFAULT_LANG) -> t
     # 5. 兜底推进：发送一个 Enter
     _tmux_run(["send-keys", "-t", target, "Enter"])
     return True, t(lang, "mm_wake_enter3")
+
+
+def tmux_new_session(agent: str = "bash", cwd: str = "", name: str = "", prompt: str = "", lang=DEFAULT_LANG) -> tuple:
+    """创建新的 Tmux 会话并启动指定智能体或交互式终端。
+    返回 (ok: bool, result: dict or err_msg: str)。"""
+    name = (name or "").strip()
+    if name:
+        if not re.match(r"^[a-zA-Z0-9_.-]+$", name) or len(name) > 40:
+            return False, "invalid session name (allowed: a-z, A-Z, 0-9, _, -, .)"
+    else:
+        name = f"agent-{agent}-{secrets.token_hex(2)}"
+
+    # 检查是否已存在同名 session
+    ok, _ = _tmux_exec(["has-session", "-t", name])
+    if ok:
+        name = f"{name}-{secrets.token_hex(2)}"
+
+    home_dir = "/home/tetsuya"
+    cwd = (cwd or "").strip()
+    if not cwd or cwd == "~":
+        cwd = home_dir
+    elif cwd.startswith("~/"):
+        cwd = os.path.join(home_dir, cwd[2:])
+    if not os.path.isdir(cwd):
+        cwd = home_dir
+
+    # 创建独立 tmux session
+    ok, err = _tmux_exec(["new-session", "-d", "-s", name, "-c", cwd])
+    if not ok:
+        return False, f"failed to create session: {err}"
+
+    # 构造要执行的智能体命令
+    agent = (agent or "bash").lower()
+    prompt = (prompt or "").strip()
+    cmd = ""
+    if agent == "agy":
+        cmd = f'agy -i "{prompt}"' if prompt else "agy"
+    elif agent == "codex":
+        cmd = f'codex "{prompt}"' if prompt else "codex"
+    elif agent == "omp":
+        cmd = f'omp "{prompt}"' if prompt else "omp"
+    elif agent == "opencode":
+        cmd = f'opencode run "{prompt}"' if prompt else "opencode"
+    elif agent == "bash":
+        if prompt:
+            cmd = prompt
+
+    if cmd:
+        time.sleep(0.15)
+        _tmux_exec(["send-keys", "-t", name, cmd, "Enter"])
+
+    _tmux_cache["t"] = 0
+    _tmux_full_cache["t"] = 0
+    return True, {"session": name, "target": f"{name}:0.0"}
+
+
+def tmux_kill_session(session_name: str, lang=DEFAULT_LANG) -> tuple:
+    """关闭指定的 Tmux 会话。"""
+    if not session_name or not re.match(r"^[a-zA-Z0-9_.-]+$", session_name):
+        return False, "invalid session name"
+    ok, err = _tmux_exec(["kill-session", "-t", session_name])
+    _tmux_cache["t"] = 0
+    _tmux_full_cache["t"] = 0
+    if ok:
+        return True, f"session '{session_name}' terminated"
+    return False, err or f"failed to terminate session '{session_name}'"
+
+
+def tmux_send_input(target: str, text: str = "", enter: bool = True, key: str = "", lang=DEFAULT_LANG) -> tuple:
+    """向指定的 Tmux 目标 (session 或 session:win.pane) 发送按键或文本输入。"""
+    if not target or not re.match(r"^[a-zA-Z0-9_.:-]+$", target):
+        return False, "invalid target"
+
+    ALLOWED_KEYS = {
+        "C-c", "Enter", "q", "C-d", "C-z", "y", "n", "Escape", "Space", "BSpace",
+        "Up", "Down", "Left", "Right"
+    }
+    if key:
+        if key not in ALLOWED_KEYS:
+            return False, f"unsupported key: {key}"
+        ok, err = _tmux_exec(["send-keys", "-t", target, key])
+        _tmux_cache["t"] = 0
+        _tmux_full_cache["t"] = 0
+        return ok, err or "key sent"
+
+    if text:
+        # 使用 -l 进行原生字符写入，避免特殊字符被 tmux 解析
+        ok, err = _tmux_exec(["send-keys", "-t", target, "-l", text])
+        if enter:
+            _tmux_exec(["send-keys", "-t", target, "Enter"])
+        _tmux_cache["t"] = 0
+        _tmux_full_cache["t"] = 0
+        return ok, err or "text sent"
+
+    return False, "no input provided"
+
 
 

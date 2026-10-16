@@ -11,6 +11,20 @@ const TS_MODE = BOOT.tsMode;
 const TS_HOST = "100.76.219.104";
 const LAN_HOST = "192.168.3.82";
 const linkHost = (h) => (TS_MODE && (h === "192.168.3.82")) ? TS_HOST : h;  // 来源为 tailscale(100.64.0.0/10) 时链接主机改用 tailscale IP
+const getMagpieUrl = () => {
+  const isTs = (window.__BOOT__ && window.__BOOT__.tsMode) ||
+               (typeof TS_MODE !== "undefined" && TS_MODE) ||
+               location.hostname.endsWith(".ts.net") ||
+               (typeof TS_HOST !== "undefined" && location.hostname === TS_HOST) ||
+               location.hostname.startsWith("100.");
+  if (isTs) {
+    return "https://debian.tailb4776a.ts.net:8443/";
+  }
+  if (location.hostname === "127.0.0.1" || location.hostname === "localhost") {
+    return "http://127.0.0.1:3426/";
+  }
+  return "https://debian.tailb4776a.ts.net:8443/";
+};
 const T = BOOT.t;
 const t = (k, p) => { let s = T[k] ?? k; if (p !== undefined) { for (const [a, b] of Object.entries(p)) s = s.split("{" + a + "}").join(b); } return s; };
 const DASH_LANGS = ["zh", "en", "ja"];
@@ -132,7 +146,7 @@ function row(e, mobile) {
   else if (e.type === "systemd" && e.unit) detail = `<span class='detail' title='${t("detail_unit")}'>${escHtml(e.unit)}</span>`;
   const ip = e.ip;
   const loopback = ip.startsWith("127.") || ip === "::1" || ip.startsWith("::ffff:127.");
-  const link = loopback ? `http://127.0.0.1:${e.port}/` : `http://${linkHost(location.hostname)}:${e.port}/`;
+  const link = (e.port === 3426) ? getMagpieUrl() : (loopback ? `http://127.0.0.1:${e.port}/` : `http://${linkHost(location.hostname)}:${e.port}/`);
   const loop = loopback ? ' <span class="local">' + t("loopback") + '</span>' : "";
   const cmd = e.cmdline || "—", cwd = e.cwd || "—";
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -363,6 +377,7 @@ function renderRepos(d) {
     const stripOf = (traj) => (traj || []).map(trajCell).join("");
     el.innerHTML = list.map(r => {
       const meta = [t("rp_commits", { n: r.commits ?? "—" }), fmtB(r.size), t("rp_files", { n: r.files ?? "—" })];
+      if (r.branches > 1) meta.push(t("rp_branches", { n: r.branches }));
       if (r.dirty) meta.push(`<span class="rp-dirty">${t("rp_dirty", { n: r.dirty })}</span>`);
       return `<div class="rp-row" role="button" tabindex="0" data-traj="${escAttr(r.name)}">
         <div class="rp-l1"><span class="rp-name">${escHtml(r.name)}</span><span class="rp-branch">${escHtml(r.branch)}</span>
@@ -482,9 +497,13 @@ function renderToolchips() {
   const el = $("toolchips");
   if (!el) return;
   const ports = new Set(services.filter(s => !s.paused).map(s => s.port));   // 暂停服务不显示
-  const chips = TOOL_LINKS.filter(([n, p]) => ports.has(p)).map(([n, p]) =>
+  let chips = TOOL_LINKS.filter(([n, p]) => ports.has(p)).map(([n, p]) =>
     `<a class='chip tchip' href='http://${linkHost(location.hostname)}:${p}/' target='_blank' rel='noopener'>${n} :${p} ${icon("ext", 11)}</a>`).join("");
+  if (!BOOT.static && ports.has(3426)) {
+    chips = `<a class='chip tchip magpie-chip' style='color:#c084fc;border-color:rgba(168,85,247,0.35);background:rgba(168,85,247,0.08);' href='${escAttr(getMagpieUrl())}' target='_blank' rel='noopener'>Magpie ${icon("ext", 11)}</a>` + chips;
+  }
   el.innerHTML = chips;
+  el.hidden = !chips;
   el.style.display = chips ? "" : "none";
 }
 
@@ -1164,6 +1183,7 @@ function applyFragment(part, selector, html) {
     if (!isMobile() && curCat !== "home") next.classList.add("cat-off");
   }
   else return false;
+  if (part === "toolchips") renderToolchips();
   return true;
 }
 
@@ -2864,6 +2884,9 @@ async function renderTmuxPage() {
             <button class="btn-tmux-act btn-tmux-copy-attach gcopy" data-copy="${escAttr(s.attach_cmd)}" title="${escAttr(t('tmux_copy_attach'))}">
               ${icon("copy", 12)} <span>attach</span>
             </button>
+            <button class="btn-tmux-act btn-tmux-kill danger" data-sname="${escAttr(s.name)}" title="${escAttr(t('tmux_kill_session'))}">
+              ${icon("close", 12)} <span>${escHtml(t("tmux_kill"))}</span>
+            </button>
           </div>
         </div>
         <div class="tmux-meta-bar">
@@ -3029,6 +3052,31 @@ function stopTmuxSheetLive() {
       uiNotice(t("tmux_copied", { cmd }));
       return;
     }
+
+    const killBtn = e.target.closest(".btn-tmux-kill");
+    if (killBtn && killBtn.dataset.sname) {
+      const sname = killBtn.dataset.sname;
+      uiModal(t("tmux_kill_confirm", { sname })).then(async ok => {
+        if (!ok) return;
+        try {
+          const r = await fetch("/api/tmux/kill", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Svc-Token": BOOT.token || "" },
+            body: JSON.stringify({ session: sname })
+          });
+          const res = await r.json();
+          if (res.ok) {
+            uiNotice(t("tmux_killed") || "Session terminated");
+            renderTmuxPage();
+          } else {
+            uiNotice(res.msg || "Kill failed");
+          }
+        } catch (err) {
+          uiNotice("Error: " + err.message);
+        }
+      });
+      return;
+    }
   });
 
   // 绑定 Tmux 全屏终端交互
@@ -3036,6 +3084,34 @@ function stopTmuxSheetLive() {
   if (sheet) {
     const backBtn = $("tmux-sheet-back");
     if (backBtn) backBtn.addEventListener("click", closeTmuxSheet);
+
+    const sheetKillBtn = $("btn-tmux-sheet-kill");
+    if (sheetKillBtn) {
+      sheetKillBtn.addEventListener("click", () => {
+        if (!curTmuxSheet.sname) return;
+        const sname = curTmuxSheet.sname;
+        uiModal(t("tmux_kill_confirm", { sname })).then(async ok => {
+          if (!ok) return;
+          try {
+            const r = await fetch("/api/tmux/kill", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "X-Svc-Token": BOOT.token || "" },
+              body: JSON.stringify({ session: sname })
+            });
+            const res = await r.json();
+            if (res.ok) {
+              closeTmuxSheet();
+              uiNotice(t("tmux_killed") || "Session terminated");
+              renderTmuxPage();
+            } else {
+              uiNotice(res.msg || "Kill failed");
+            }
+          } catch (err) {
+            uiNotice("Error: " + err.message);
+          }
+        });
+      });
+    }
 
     const liveBtn = $("btn-tmux-sheet-live");
     if (liveBtn) {
@@ -3111,10 +3187,154 @@ function stopTmuxSheetLive() {
       });
     }
 
+    // 交互式终端输入与快速按键
+    const termInput = $("tmux-term-input");
+    const termSendBtn = $("btn-tmux-term-send");
+    const sendTermInput = async () => {
+      if (!termInput || !curTmuxSheet.target) return;
+      const text = termInput.value;
+      if (!text && text !== "") return;
+      termInput.value = "";
+      try {
+        await fetch("/api/tmux/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Svc-Token": BOOT.token || "" },
+          body: JSON.stringify({ target: curTmuxSheet.target, text, enter: true })
+        });
+        await refreshTmuxSheetOutput();
+      } catch (err) {
+        console.error("send error:", err);
+      }
+    };
+
+    if (termInput) {
+      termInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          sendTermInput();
+        }
+      });
+    }
+    if (termSendBtn) {
+      termSendBtn.addEventListener("click", sendTermInput);
+    }
+
+    const sheetBar = $("tmux-sheet-bar");
+    if (sheetBar) {
+      sheetBar.addEventListener("click", async (e) => {
+        const keyBtn = e.target.closest(".btn-term-key");
+        if (!keyBtn || !curTmuxSheet.target) return;
+        const key = keyBtn.dataset.key;
+        const cmd = keyBtn.dataset.cmd;
+        try {
+          if (key) {
+            await fetch("/api/tmux/send", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "X-Svc-Token": BOOT.token || "" },
+              body: JSON.stringify({ target: curTmuxSheet.target, key })
+            });
+          } else if (cmd) {
+            await fetch("/api/tmux/send", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "X-Svc-Token": BOOT.token || "" },
+              body: JSON.stringify({ target: curTmuxSheet.target, text: cmd, enter: true })
+            });
+          }
+          await refreshTmuxSheetOutput();
+        } catch (err) {
+          console.error("key send error:", err);
+        }
+      });
+    }
+
     // ESC 关闭
     window.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && !sheet.hidden) {
         closeTmuxSheet();
+      }
+    });
+  }
+
+  // 新建智能体会话弹层 (New Agent Modal)
+  const newOpenBtn = $("btn-tmux-new-open");
+  const newModal = $("tmux-new-modal");
+  const newCloseBtn = $("btn-tmux-new-close");
+  const newCancelBtn = $("btn-tmux-new-cancel");
+  const newSubmitBtn = $("btn-tmux-new-submit");
+  const agentGrid = $("tmux-new-agent-grid");
+  const cwdChips = $("tmux-new-cwd-chips");
+  const cwdInput = $("tmux-new-cwd-input");
+  const promptInput = $("tmux-new-prompt-input");
+  const nameInput = $("tmux-new-name-input");
+
+  let selectedAgent = "agy";
+
+  if (newOpenBtn && newModal) {
+    newOpenBtn.addEventListener("click", () => {
+      newModal.hidden = false;
+    });
+  }
+  const closeNewModal = () => {
+    if (newModal) newModal.hidden = true;
+  };
+  if (newCloseBtn) newCloseBtn.addEventListener("click", closeNewModal);
+  if (newCancelBtn) newCancelBtn.addEventListener("click", closeNewModal);
+
+  if (agentGrid) {
+    agentGrid.addEventListener("click", (e) => {
+      const card = e.target.closest(".tmux-agent-card");
+      if (!card || !card.dataset.agent) return;
+      agentGrid.querySelectorAll(".tmux-agent-card").forEach(c => c.classList.remove("active"));
+      card.classList.add("active");
+      selectedAgent = card.dataset.agent;
+    });
+  }
+
+  if (cwdChips && cwdInput) {
+    cwdChips.addEventListener("click", (e) => {
+      const chip = e.target.closest(".chip");
+      if (!chip || !chip.dataset.path) return;
+      cwdChips.querySelectorAll(".chip").forEach(c => c.classList.remove("active"));
+      chip.classList.add("active");
+      cwdInput.value = chip.dataset.path;
+    });
+  }
+
+  if (newSubmitBtn) {
+    newSubmitBtn.addEventListener("click", async () => {
+      newSubmitBtn.disabled = true;
+      const origText = newSubmitBtn.innerHTML;
+      newSubmitBtn.innerHTML = `${icon("wait", 14)} <span>...</span>`;
+      try {
+        const payload = {
+          agent: selectedAgent,
+          cwd: cwdInput ? cwdInput.value.trim() : "",
+          prompt: promptInput ? promptInput.value.trim() : "",
+          name: nameInput ? nameInput.value.trim() : ""
+        };
+        const r = await fetch("/api/tmux/new", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Svc-Token": BOOT.token || "" },
+          body: JSON.stringify(payload)
+        });
+        const res = await r.json();
+        if (res.ok) {
+          closeNewModal();
+          if (promptInput) promptInput.value = "";
+          if (nameInput) nameInput.value = "";
+          uiNotice(t("mm_goal_started", { s: res.session }) || `Session ${res.session} started`);
+          await renderTmuxPage();
+          if (res.session) {
+            openTmuxSheet(res.session, res.target || `${res.session}:0.0`);
+          }
+        } else {
+          uiNotice(res.msg || "Failed to create session");
+        }
+      } catch (err) {
+        uiNotice("Error: " + err.message);
+      } finally {
+        newSubmitBtn.disabled = false;
+        newSubmitBtn.innerHTML = origText;
       }
     });
   }
@@ -3965,7 +4185,6 @@ function rtCardHtml(a) {
   }
 
   const tasksHtml = rtTasksHtml(a);
-  const quotaHtml = rtQuotaHtml(a);
   const detailBtn = `<button class="rt-btn ghost btn-agent-detail" data-agent-id="${escAttr(a.id)}">${t("agent_btn_detail")}</button>`;
 
   return `<article class="agent-card ${st}" data-aname="${escAttr(a.name)}">
@@ -3981,7 +4200,6 @@ function rtCardHtml(a) {
       </div>
     </div>
     ${procsHtml}
-    ${quotaHtml}
     ${tasksHtml ? `<div class="rt-tasks" style="margin-top:8px;">${tasksHtml}</div>` : ""}
   </article>`;
 }
@@ -3996,9 +4214,943 @@ function rtMatch(a, f) {
   return true;
 }
 
+let curAgentTab = "runtimes";
+let curMagpiePeriod = "today";
+let curQuotaMode = "remain";
+let curAccountMasked = true;
+let curMagpieData = null;
+let curMagpieRoutingData = null;
+let curMagpieProvidersData = null;
+let magpieUsageCache = {};
+let magpieRoutingCache = null;
+let magpieProvidersCache = null;
+
+function fmtTokens(n) {
+  if (n == null || isNaN(n)) return "0";
+  n = Number(n);
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + "K";
+  return String(Math.round(n));
+}
+
+function fmtCost(n) {
+  if (n == null || isNaN(n)) return "$0.00";
+  n = Number(n);
+  if (n >= 100) return "$" + n.toFixed(1);
+  if (n >= 1) return "$" + n.toFixed(2);
+  if (n > 0) return "$" + n.toFixed(3);
+  return "$0.00";
+}
+
+function fmtSpeed(ms, out) {
+  if (!ms || !out) return "—";
+  const sec = ms / 1000;
+  if (sec <= 0) return "—";
+  const spd = out / sec;
+  return spd >= 100 ? Math.round(spd) + " t/s" : spd.toFixed(1) + " t/s";
+}
+
+function fmtLatency(ms) {
+  if (!ms) return "—";
+  if (ms >= 1000) return (ms / 1000).toFixed(2) + "s";
+  return Math.round(ms) + "ms";
+}
+
+function fmtMonthDayTime(isoStr) {
+  if (!isoStr) return "";
+  try {
+    const d = new Date(isoStr);
+    return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  } catch (e) {
+    return isoStr;
+  }
+}
+
+function fmtResetDate(isoStr) {
+  if (!isoStr) return "";
+  try {
+    const d = new Date(isoStr);
+    const now = new Date();
+    const isTomorrow = (d.getDate() === now.getDate() + 1 && d.getMonth() === now.getMonth());
+    const isToday = (d.getDate() === now.getDate() && d.getMonth() === now.getMonth());
+    const timeStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    if (isTomorrow) return `明天 ${timeStr}`;
+    if (isToday) return `今天 ${timeStr}`;
+    return `${d.getMonth() + 1}月${d.getDate()}日 ${timeStr}`;
+  } catch (e) {
+    return isoStr;
+  }
+}
+
+function fmtRelTime(isoStr) {
+  if (!isoStr) return "";
+  try {
+    const d = new Date(isoStr);
+    const diffSec = Math.round((d.getTime() - Date.now()) / 1000);
+    if (diffSec <= 0) return t("mp_reset_done");
+    if (diffSec < 3600) return `${Math.ceil(diffSec / 60)} 分钟后`;
+    if (diffSec < 86400) return `${Math.round(diffSec / 3600)} 小时后`;
+    return `${Math.round(diffSec / 86400)} 天后`;
+  } catch (e) {
+    return "";
+  }
+}
+
+function renderSparkline(points) {
+  if (!points || points.length < 2) {
+    return `
+      <svg class="mp-sparkline-svg" viewBox="0 0 200 24" preserveAspectRatio="none">
+        <line x1="0" y1="18" x2="200" y2="18" stroke="rgba(255,255,255,0.06)" stroke-width="1" />
+        <line x1="0" y1="12" x2="200" y2="12" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.6" />
+      </svg>
+    `;
+  }
+  const values = points.map(p => Number(p.amount) || 0);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = (max - min) || 1;
+  const W = 200, H = 24, padY = 3;
+  const polyPoints = points.map((p, i) => {
+    const x = Math.round((i / (points.length - 1)) * W);
+    const y = Math.round(H - padY - ((p.amount - min) / range) * (H - padY * 2));
+    return `${x},${y}`;
+  }).join(" ");
+
+  return `
+    <svg class="mp-sparkline-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      <line x1="0" y1="${H-1}" x2="${W}" y2="${H-1}" stroke="rgba(255,255,255,0.06)" stroke-width="1" />
+      <polyline fill="none" stroke="#38bdf8" stroke-width="1.8" points="${polyPoints}" />
+    </svg>
+  `;
+}
+
+function renderAccountRow(acc, provider, isSec = false) {
+  const isMaskedCls = curAccountMasked ? "is-masked" : "";
+  const userDisp = acc.user || (acc.balance ? "" : "API key");
+  const planDisp = acc.plan || "";
+
+  let windowsHtml = "";
+  if (acc.windows && acc.windows.length > 0) {
+    const isMultiWin = acc.windows.length > 1;
+    windowsHtml = `
+      <div class="mp-win-container" style="${isMultiWin ? '' : 'flex-direction:column;'}">
+        ${acc.windows.map(w => {
+          const usedPct = Number(w.used) || 0;
+          const remainPct = Math.max(0, Math.min(100, 100 - usedPct));
+          let valText = "";
+          let barPct = 0;
+
+          if (w.name === "Credits" || (w.display && w.display.includes("/"))) {
+            const parts = (w.display || "").split("/").map(s => parseFloat(s.trim()));
+            const fmtNum = (n) => {
+              if (n == null || isNaN(n)) return "0";
+              const num = Number(n);
+              return Number.isInteger(num) ? num.toLocaleString() : num.toFixed(2);
+            };
+            const totalLimit = fmtNum(w.limit || parts[1] || 50);
+            if (curQuotaMode === "remain") {
+              const remRaw = (w.runsOut != null) ? Number(w.runsOut) : ((parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) ? Math.max(0, parts[1] - parts[0]) : (w.limit && w.amount != null ? Math.max(0, w.limit - w.amount) : null));
+              const rem = remRaw != null ? fmtNum(remRaw) : remainPct.toFixed(1);
+              valText = `${rem} / ${totalLimit} ${t("mp_credits")} · ${t("mp_view_mode_remain")} ${remainPct.toFixed(1)}%`;
+              barPct = remainPct;
+            } else {
+              valText = `${w.display || `${fmtNum(w.amount || parts[0] || 0)} / ${totalLimit}`} ${t("mp_credits")} · ${t("mp_view_mode_used")} ${usedPct.toFixed(1)}%`;
+              barPct = usedPct;
+            }
+          } else {
+            if (curQuotaMode === "remain") {
+              valText = `${t("mp_view_mode_remain")} ${remainPct >= 10 ? remainPct.toFixed(0) : remainPct.toFixed(1)}%`;
+              barPct = remainPct;
+            } else {
+              valText = `${t("mp_view_mode_used")} ${usedPct >= 10 ? usedPct.toFixed(0) : usedPct.toFixed(1)}%`;
+              barPct = usedPct;
+            }
+          }
+
+          let metaHtml = "";
+          if (w.resetsAt) {
+            const dateStr = fmtResetDate(w.resetsAt);
+            const relStr = fmtRelTime(w.resetsAt);
+            let paceStr = "";
+            if (w.holds && w.holds.since) {
+              const s = new Date(w.holds.since).getTime();
+              const e = new Date(w.resetsAt).getTime();
+              const n = Date.now();
+              if (e > s && n >= s) {
+                const elRatio = (n - s) / (e - s);
+                const pace = Math.round((usedPct / 100 - elRatio) * 100);
+                paceStr = ` · ${t("mp_pace", { n: (pace >= 0 ? "+" : "") + pace })}`;
+              }
+            }
+            metaHtml += `<span>重置于 ${dateStr} · ${relStr}${paceStr}</span>`;
+          }
+          if (w.holds && w.holds.tokens) {
+            const tokStr = t("mp_window_tokens", { n: fmtTokens(w.holds.tokens) });
+            const costStr = w.holds.cost ? ` · ${t("mp_window_cost", { n: w.holds.cost.toFixed(2) })}` : "";
+            metaHtml += `<span>${tokStr}${costStr}</span>`;
+          }
+          if (w.runsOutAt) {
+            const daysLeft = Math.max(1, Math.round((new Date(w.runsOutAt).getTime() - Date.now()) / (86400 * 1000)));
+            const roStr = (w.runsOut != null) ? (Number.isInteger(Number(w.runsOut)) ? Number(w.runsOut).toLocaleString() : Number(w.runsOut).toFixed(2)) : "";
+            metaHtml += `<span>${roStr ? `${roStr} 积分 将于 ` : ""}${fmtMonthDayTime(w.runsOutAt)} 过期 · ${daysLeft} 天后</span>`;
+          }
+
+          const fillCls = (barPct <= 15) ? "low" : (barPct <= 35) ? "warn" : "";
+          const winNameDisp = (w.name === "5 hours" ? t("mp_win_5h") : w.name === "7 days" ? t("mp_win_7d") : w.name === "Credits" ? t("mp_credits") : w.name);
+
+          return `
+            <div class="mp-win-col">
+              <div class="mp-win-top">
+                <span class="mp-win-name">${escHtml(winNameDisp)}</span>
+                <span class="mp-win-val">${escHtml(valText)}</span>
+              </div>
+              <div class="mp-win-track">
+                <div class="mp-win-fill ${fillCls}" style="width:${Math.max(2, Math.min(100, barPct))}%;"></div>
+              </div>
+              ${metaHtml ? `<div class="mp-win-meta">${metaHtml}</div>` : ""}
+            </div>
+          `;
+        }).join("")}
+      </div>
+    `;
+  }
+
+  let dailyHtml = "";
+  if (acc.daily && acc.daily.days && acc.daily.days.length > 0) {
+    const dUsed = acc.daily.days[0].used;
+    dailyHtml = `
+      <div class="mp-daily-burn">
+        <span>${t("mp_daily_used", { n: dUsed })}</span>
+        <span style="color:var(--text-dim);font-size:10px;">刚刚更新</span>
+      </div>
+    `;
+  }
+
+  let balanceHtml = "";
+  if (acc.balance != null) {
+    let statHtml = "";
+    if (acc.balanceTrend && acc.balanceTrend.runsOut) {
+      const daysLeft = Math.max(1, Math.round((new Date(acc.balanceTrend.runsOut).getTime() - Date.now()) / (86400 * 1000)));
+      statHtml = `按此速度，预计 ${daysLeft} 天后用完`;
+    }
+    balanceHtml = `
+      <div class="mp-balance-box">
+        <span class="mp-balance-lbl">${t("mp_balance")}</span>
+        <span class="mp-balance-val">${escHtml(acc.balance)}</span>
+      </div>
+      <div class="mp-trend-stat">
+        <span>${statHtml}</span>
+        <span style="color:var(--text-dim);font-size:10.5px;">刚刚更新</span>
+      </div>
+      ${renderSparkline(acc.balanceTrend ? acc.balanceTrend.points : null)}
+      <div class="mp-trend-stat" style="font-size:10.5px;color:var(--text-soft);">
+        <span><span class="mp-trend-dot"></span>${t("mp_balance")} ${escHtml(acc.balance)} ${(acc.balanceTrend && acc.balanceTrend.perDay != null && !isNaN(acc.balanceTrend.perDay)) ? `· 约每天 $${Number(acc.balanceTrend.perDay).toFixed(2)}` : ""}</span>
+      </div>
+    `;
+  }
+
+  let resetsHtml = "";
+  if (acc.resets && acc.resets.count > 0) {
+    const untilStr = acc.resets.until ? fmtMonthDayTime(acc.resets.until) : "";
+    resetsHtml = `
+      <div class="mp-reset-card-badge">
+        ${icon("retry", 12)}
+        <span>${t("mp_resets_card", { n: acc.resets.count })} ${untilStr ? `· ${untilStr}前有效` : ""}</span>
+      </div>
+    `;
+  }
+
+  let errorHtml = "";
+  if (acc.error) {
+    errorHtml = `<div class="mp-acc-error">${escHtml(acc.error)}</div>`;
+  }
+
+  return `
+    <div class="mp-account-row">
+      ${userDisp || planDisp ? `
+        <div class="mp-acc-head">
+          <span class="mp-acc-email ${isMaskedCls}" title="${escAttr(userDisp)}">${escHtml(userDisp)}</span>
+          ${planDisp ? `<span class="mp-acc-plan">${escHtml(planDisp)}</span>` : ""}
+        </div>
+      ` : ""}
+      ${windowsHtml}
+      ${balanceHtml}
+      ${dailyHtml}
+      ${resetsHtml}
+      ${errorHtml}
+    </div>
+  `;
+}
+
+function renderMagpieQuotas(quotas, container) {
+  if (!container) return;
+  if (!quotas || !quotas.length) {
+    container.innerHTML = `<div class="gempty" style="grid-column:1/-1;">${escHtml(t("mp_empty"))}</div>`;
+    return;
+  }
+  const groups = {};
+  quotas.forEach(q => {
+    const p = q.provider || "other";
+    if (!groups[p]) {
+      groups[p] = {
+        provider: p,
+        name: q.name || p,
+        items: []
+      };
+    }
+    groups[p].items.push(q);
+  });
+
+  const PROV_ORDER = ["antigravity", "agy", "dim", "codex", "grok", "kiro", "workbuddy-ai", "our-free-model", "openrouter", "deepseek"];
+  const sortedKeys = Object.keys(groups).sort((a, b) => {
+    const ia = PROV_ORDER.indexOf(a) !== -1 ? PROV_ORDER.indexOf(a) : 99;
+    const ib = PROV_ORDER.indexOf(b) !== -1 ? PROV_ORDER.indexOf(b) : 99;
+    return ia - ib;
+  });
+
+  const cardsHtml = sortedKeys.map(p => {
+    const g = groups[p];
+    const primary = g.items[0];
+    const secondaries = g.items.slice(1);
+    const hasSec = secondaries.length > 0;
+    const provIcon = (p === "antigravity" || p === "agy" ? "spark" : p === "dim" ? "cpu" : p === "codex" ? "bolt" : p === "workbuddy-ai" ? "cpu" : p === "deepseek" ? "spark" : p === "kiro" ? "spark" : p === "grok" ? "bolt" : p === "openrouter" ? "network" : "box");
+    const provCol = (p === "antigravity" || p === "agy" ? "#c084fc" : p === "dim" ? "#10b981" : p === "codex" ? "#10b981" : p === "workbuddy-ai" ? "#06b6d4" : p === "deepseek" ? "#3b82f6" : p === "kiro" ? "#8b5cf6" : p === "grok" ? "#e2e8f0" : p === "openrouter" ? "#f59e0b" : "#64748b");
+    const pDisplayName = (p === "antigravity" || p === "agy" ? "Antigravity (Gemini & Claude)" : p === "dim" ? "dim" : p === "grok" ? "Grok (SuperGrok)" : g.name);
+
+    return `
+      <div class="mp-quota-card" data-provider="${escAttr(p)}">
+        <div class="mp-quota-head">
+          <div class="mp-quota-provider" style="color:${provCol};">
+            ${icon(provIcon, 15)} <span>${escHtml(pDisplayName)}</span>
+          </div>
+          ${hasSec ? `
+            <button class="mp-expand-btn" data-target="mp-sec-${escAttr(p)}" type="button">
+              ${escHtml(t("mp_expand_accounts", { n: secondaries.length }))}
+            </button>
+          ` : ""}
+        </div>
+        <div class="mp-primary-account">
+          ${renderAccountRow(primary, p)}
+        </div>
+        ${hasSec ? `
+          <div class="mp-secondary-accounts" id="mp-sec-${escAttr(p)}" hidden>
+            ${secondaries.map(sec => renderAccountRow(sec, p, true)).join("")}
+          </div>
+        ` : ""}
+      </div>
+    `;
+  }).join("");
+
+  container.innerHTML = cardsHtml;
+}
+
+async function loadMagpieUsage(period = "today", force = false) {
+  if (BOOT.static && BOOT.magpieUsage && period === "today" && !force) {
+    return BOOT.magpieUsage;
+  }
+  if (!force && magpieUsageCache[period]) {
+    return magpieUsageCache[period];
+  }
+  try {
+    const r = await tlGet(`/api/magpie/usage?period=${encodeURIComponent(period)}`);
+    if (r) {
+      magpieUsageCache[period] = r;
+      return r;
+    }
+  } catch (e) {
+    console.warn("loadMagpieUsage error:", e);
+  }
+  return magpieUsageCache[period] || { ok: false, calls: 0, cost: 0, agents: [], models: [], series: [] };
+}
+
+function renderMagpieUsage(d) {
+  const el = $("agent-view-usage");
+  if (!el || !d) return;
+  curMagpieData = d;
+
+  const kpisEl = $("mp-kpis");
+  if (kpisEl) {
+    const totalCalls = d.calls || 0;
+    const estCost = fmtCost(d.cost);
+    const totalTokens = (d.input || 0) + (d.output || 0) + (d.reasoning || 0) + (d.cache_read || 0);
+    const inTokens = d.input || 0;
+    const cacheTokens = d.cache_read || 0;
+    const cacheHit = (inTokens + cacheTokens > 0)
+      ? ((cacheTokens / (inTokens + cacheTokens)) * 100).toFixed(1) + "%"
+      : "—";
+    const avgTtft = (d.timed && d.timed > 0)
+      ? fmtLatency(d.ttft_ms / d.timed)
+      : "—";
+
+    kpisEl.innerHTML = `
+      <div class="agent-kpi-card mp-kpi-card">
+        <div class="agent-kpi-val mp-kpi-val" style="color:var(--c-blue);">${totalCalls.toLocaleString()}</div>
+        <div class="agent-kpi-lbl">${escHtml(t("mp_kpi_calls"))}</div>
+        <div class="mp-kpi-sub">${d.errors ? `<span style="color:var(--c-red);">${d.errors} ${escHtml(t("mp_errors"))}</span>` : `<span style="color:var(--c-green);">100% OK</span>`}</div>
+      </div>
+      <div class="agent-kpi-card mp-kpi-card">
+        <div class="agent-kpi-val mp-kpi-val" style="color:var(--c-green);">${estCost}</div>
+        <div class="agent-kpi-lbl">${escHtml(t("mp_kpi_cost"))}</div>
+        <div class="mp-kpi-sub">${d.unpriced ? `${d.unpriced} unpriced` : "USD"}</div>
+      </div>
+      <div class="agent-kpi-card mp-kpi-card">
+        <div class="agent-kpi-val mp-kpi-val">${fmtTokens(totalTokens)}</div>
+        <div class="agent-kpi-lbl">${escHtml(t("mp_kpi_tokens"))}</div>
+        <div class="mp-kpi-sub" title="${escAttr(t("mp_tokens_sub", { inp: fmtTokens(d.input), out: fmtTokens(d.output), rea: fmtTokens(d.reasoning), cac: fmtTokens(d.cache_read) }))}">
+          ↓${fmtTokens(d.input)} · ↑${fmtTokens(d.output)} · ⚡${fmtTokens(d.reasoning)}
+        </div>
+      </div>
+      <div class="agent-kpi-card mp-kpi-card">
+        <div class="agent-kpi-val mp-kpi-val" style="color:var(--c-violet);">${cacheHit}</div>
+        <div class="agent-kpi-lbl">${escHtml(t("mp_kpi_cache_hit"))}</div>
+        <div class="mp-kpi-sub">Hit ${fmtTokens(cacheTokens)}</div>
+      </div>
+      <div class="agent-kpi-card mp-kpi-card">
+        <div class="agent-kpi-val mp-kpi-val" style="color:var(--c-orange);">${avgTtft}</div>
+        <div class="agent-kpi-lbl">${escHtml(t("mp_kpi_ttft"))}</div>
+        <div class="mp-kpi-sub">${d.timed || 0} samples</div>
+      </div>
+    `;
+  }
+
+  const quotaGrid = $("mp-quota-grid");
+  if (quotaGrid) {
+    renderMagpieQuotas(d.quotas || [], quotaGrid);
+  }
+
+  const trendTitle = $("mp-trend-title");
+  if (trendTitle) {
+    trendTitle.textContent = (d.period === "today") ? t("mp_trend_title") : t("mp_trend_title_days");
+  }
+  const trendSub = $("mp-chart-summary");
+  if (trendSub) {
+    trendSub.textContent = `${(d.calls || 0).toLocaleString()} reqs · ${fmtCost(d.cost)}`;
+  }
+  const chartEl = $("mp-timeline-chart");
+  if (chartEl) {
+    const series = d.series || [];
+    if (!series.length) {
+      chartEl.innerHTML = `<div class="gempty" style="width:100%;">${escHtml(t("mp_empty"))}</div>`;
+    } else {
+      const maxCalls = Math.max(1, ...series.map(s => s.calls || 0));
+      chartEl.innerHTML = series.map(s => {
+        const calls = s.calls || 0;
+        const pct = Math.max(calls > 0 ? 6 : 2, Math.round((calls / maxCalls) * 100));
+        const tip = `${s.label}: ${calls} calls · ${fmtCost(s.cost)} · ${fmtTokens((s.input||0) + (s.output||0))} tokens`;
+        const activeColor = calls > 0 ? "var(--ch-cpu)" : "rgba(128,128,128,.2)";
+        return `
+          <div class="mp-bar-col" title="${escHtml(tip)}">
+            <div class="mp-bar-fill" style="height:${pct}%;background:${activeColor};"></div>
+            <span class="mp-bar-label">${escHtml(s.label)}</span>
+          </div>
+        `;
+      }).join("");
+    }
+  }
+
+  const agentsList = $("mp-agents-list");
+  if (agentsList) {
+    const agents = (d.agents || []).slice().sort((a, b) => (b.calls || 0) - (a.calls || 0));
+    const totalCalls = d.calls || 1;
+    if (!agents.length) {
+      agentsList.innerHTML = `<div class="gempty">${escHtml(t("mp_empty"))}</div>`;
+    } else {
+      agentsList.innerHTML = agents.map(a => {
+        const pct = Math.min(100, Math.round(((a.calls || 0) / totalCalls) * 100));
+        const totalTokens = (a.input || 0) + (a.output || 0) + (a.reasoning || 0) + (a.cache_read || 0);
+        return `
+          <div class="mp-item">
+            <div class="mp-item-header">
+              <span class="mp-item-name">${icon(a.icon || "bolt", 14)} <span>${escHtml(a.name || a.id)}</span></span>
+              <span class="mp-item-stats">
+                <span style="font-weight:600;color:var(--text-title);">${(a.calls || 0).toLocaleString()}</span>
+                <span style="color:var(--c-green);">${fmtCost(a.cost)}</span>
+              </span>
+            </div>
+            <div class="mp-track">
+              <div class="mp-track-fill" style="width:${pct}%;"></div>
+            </div>
+            <div class="mp-item-header" style="font-size:11px;color:var(--text-dim);">
+              <span>${fmtTokens(totalTokens)} tk (${fmtTokens(a.input)} in / ${fmtTokens(a.output)} out)</span>
+              <span>${a.timed ? `TTFT ${fmtLatency(a.ttft_ms / a.timed)}` : ""} ${a.errors ? `· <span style="color:var(--c-red);">${a.errors} err</span>` : ""}</span>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+  }
+
+  const modelsList = $("mp-models-list");
+  if (modelsList) {
+    const models = (d.models || []).slice().sort((a, b) => (b.calls || 0) - (a.calls || 0));
+    const totalCalls = d.calls || 1;
+    if (!models.length) {
+      modelsList.innerHTML = `<div class="gempty">${escHtml(t("mp_empty"))}</div>`;
+    } else {
+      modelsList.innerHTML = models.slice(0, 15).map(m => {
+        const pct = Math.min(100, Math.round(((m.calls || 0) / totalCalls) * 100));
+        const totalTokens = (m.input || 0) + (m.output || 0) + (m.reasoning || 0) + (m.cache_read || 0);
+        const spd = fmtSpeed(m.decode_ms, m.decode_out);
+        return `
+          <div class="mp-item">
+            <div class="mp-item-header">
+              <span class="mp-item-name" title="${escHtml(m.name || m.id)}">${icon("spark", 13)} <span>${escHtml(m.name || m.id)}</span></span>
+              <span class="mp-item-stats">
+                <span style="font-weight:600;color:var(--text-title);">${(m.calls || 0).toLocaleString()}</span>
+                <span style="color:var(--c-green);">${fmtCost(m.cost)}</span>
+              </span>
+            </div>
+            <div class="mp-track">
+              <div class="mp-track-fill" style="width:${pct}%;background:var(--c-violet);"></div>
+            </div>
+            <div class="mp-item-header" style="font-size:11px;color:var(--text-dim);">
+              <span>${escHtml(m.sub || m.provider || "")}</span>
+              <span>${fmtTokens(totalTokens)} tk · ${spd !== "—" ? spd : `TTFT ${fmtLatency(m.ttft_ms / (m.timed || 1))}`}</span>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+  }
+
+  const accountsGrid = $("mp-accounts-grid");
+  if (accountsGrid) {
+    const accounts = d.accounts || [];
+    if (!accounts.length) {
+      accountsGrid.innerHTML = `<div class="gempty" style="grid-column:1/-1;">${escHtml(t("mp_empty"))}</div>`;
+    } else {
+      accountsGrid.innerHTML = accounts.map(acc => {
+        const totalTokens = (acc.input || 0) + (acc.output || 0) + (acc.reasoning || 0) + (acc.cache_read || 0);
+        return `
+          <div class="mp-account-card">
+            <div class="mp-account-top">
+              <span class="mp-account-name" title="${escHtml(acc.name || acc.account || "")}">${escHtml(acc.name || acc.account || "Account")}</span>
+              <span class="mp-account-badge">${escHtml(acc.provider || "gateway")}</span>
+            </div>
+            <div class="mp-account-meta">
+              <span><b>${(acc.calls || 0).toLocaleString()}</b> reqs</span>
+              <span><b>${fmtCost(acc.cost)}</b></span>
+              <span>${fmtTokens(totalTokens)} tokens</span>
+              ${acc.errors ? `<span style="color:var(--c-red);"><b>${acc.errors}</b> err</span>` : ""}
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+  }
+
+  const freshEl = $("mp-fresh-time");
+  if (freshEl && d.fetched_at) {
+    const dateStr = new Date(d.fetched_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    freshEl.textContent = `Updated ${dateStr}`;
+  }
+}
+
+async function refreshMagpieUsage(force = false) {
+  const container = $("agent-view-usage");
+  if (!container || container.hidden) return;
+  const d = await loadMagpieUsage(curMagpiePeriod, force);
+  renderMagpieUsage(d);
+}
+
+async function loadMagpieRouting(force = false) {
+  if (BOOT.static && BOOT.magpieRouting && !force) {
+    return BOOT.magpieRouting;
+  }
+  if (!force && magpieRoutingCache) {
+    return magpieRoutingCache;
+  }
+  try {
+    const r = await tlGet("/api/magpie/routing");
+    if (r) {
+      magpieRoutingCache = r;
+      return r;
+    }
+  } catch (e) {
+    console.warn("loadMagpieRouting error:", e);
+  }
+  return magpieRoutingCache || { ok: false, routes: [], totals: {} };
+}
+
+function renderMagpieRouting(data) {
+  const el = $("agent-view-routing");
+  if (!el || !data) return;
+  curMagpieRoutingData = data;
+
+  const totals = data.totals || {};
+  const routes = data.routes || [];
+  const totalReqs = totals.requests || routes.length || 0;
+  const rerouted = totals.rerouted || 0;
+  const errors = totals.errors || 0;
+
+  // KPIs
+  const kpisEl = $("mp-routing-kpis");
+  if (kpisEl) {
+    kpisEl.innerHTML = `
+      <div class="agent-kpi-card">
+        <span class="agent-kpi-val">${totalReqs.toLocaleString()}</span>
+        <span class="agent-kpi-lbl">${escHtml(t("mp_req_total"))}</span>
+      </div>
+      <div class="agent-kpi-card">
+        <span class="agent-kpi-val" style="color:${rerouted ? 'var(--c-amber)' : 'inherit'};">${rerouted.toLocaleString()}</span>
+        <span class="agent-kpi-lbl">${escHtml(t("mp_rerouted"))}</span>
+      </div>
+      <div class="agent-kpi-card">
+        <span class="agent-kpi-val" style="color:${errors ? 'var(--c-red)' : 'var(--c-green)'};">${errors.toLocaleString()}</span>
+        <span class="agent-kpi-lbl">${escHtml(t("mp_errors"))}</span>
+      </div>
+    `;
+  }
+
+  // Highlight latest route
+  const highlightEl = $("mp-routing-highlight");
+  if (highlightEl) {
+    if (!routes.length) {
+      highlightEl.innerHTML = `<div class="gempty">${escHtml(t("mp_empty"))}</div>`;
+    } else {
+      const latest = routes[0];
+      const model = latest.model || "unknown";
+      const prov = latest.provider || "";
+      const status = latest.status || 200;
+      const isErr = status >= 400 || (latest.tries && latest.tries.some(t => t.status >= 400));
+      const isReroute = (latest.tries && latest.tries.length > 1) || latest.rerouted;
+      const badgeCls = isErr ? "err" : (isReroute ? "rerouted" : "ok");
+      const badgeTxt = isErr ? `ERR ${status}` : (isReroute ? "REROUTED" : "200 OK");
+      
+      const prompt = latest.prompt || {};
+      const winTokens = prompt.window || 200000;
+      const usedTokens = prompt.tokens || ((latest.tokens?.input || 0) + (latest.tokens?.output || 0));
+      const parts = prompt.parts || [];
+
+      // Timing Breakdown
+      const totalMs = latest.ms || 0;
+      const ttftMs = latest.ttft || 0;
+      const gwMs = Math.min(60, Math.round(ttftMs * 0.05));
+      const sendMs = Math.max(10, Math.round(ttftMs * 0.2));
+      const waitTtftMs = Math.max(0, ttftMs - gwMs - sendMs);
+      const streamMs = Math.max(0, totalMs - ttftMs);
+
+      const gwPct = totalMs ? (gwMs / totalMs * 100).toFixed(1) : 0;
+      const sendPct = totalMs ? (sendMs / totalMs * 100).toFixed(1) : 0;
+      const ttftPct = totalMs ? (waitTtftMs / totalMs * 100).toFixed(1) : 0;
+      const streamPct = totalMs ? (streamMs / totalMs * 100).toFixed(1) : 0;
+
+      // Context Window Breakdown
+      let partsHtml = "";
+      let legendHtml = "";
+      if (parts.length > 0) {
+        const segStyles = {
+          system: { cls: "mp-cseg-sys", name: "System", color: "#0a84ff" },
+          tools: { cls: "mp-cseg-tools", name: "Tools", color: "#bf5af2" },
+          rules: { cls: "mp-cseg-mem", name: "Rules/Memory", color: "#ff9f0a" },
+          files: { cls: "mp-cseg-files", name: "Files", color: "#64d2ff" },
+          results: { cls: "mp-cseg-results", name: "Results", color: "#ffd60a" },
+          chat: { cls: "mp-cseg-msgs", name: "Chat", color: "#30d158" }
+        };
+        partsHtml = parts.map(p => {
+          const conf = segStyles[p.kind] || { cls: "mp-cseg-msgs", name: p.kind, color: "#30d158" };
+          const pct = Math.max(0.5, ((p.tokens || 0) / (usedTokens || 1) * 100)).toFixed(1);
+          return `<div class="mp-cseg ${conf.cls}" style="width:${pct}%;" title="${conf.name}: ${fmtTokens(p.tokens)}"></div>`;
+        }).join("");
+
+        legendHtml = parts.map(p => {
+          const conf = segStyles[p.kind] || { cls: "", name: p.kind, color: "#aaa" };
+          return `
+            <div class="mp-leg-item">
+              <span class="mp-leg-dot" style="background:${conf.color};"></span>
+              <span>${conf.name}: <b>${fmtTokens(p.tokens)}</b></span>
+            </div>
+          `;
+        }).join("");
+      }
+
+      highlightEl.innerHTML = `
+        <div class="mp-rh-head">
+          <div class="mp-rh-title">
+            <span class="mp-rh-badge ${badgeCls}">${badgeTxt}</span>
+            <span class="mp-rh-model">${escHtml(model)}</span>
+            ${prov ? `<span class="mp-rh-provider-tag">${escHtml(prov)}</span>` : ""}
+          </div>
+          <div class="mp-rh-meta">
+            ${latest.conv ? `<span>Conv: <b>${escHtml(latest.conv.slice(0, 16))}...</b> · </span>` : ""}
+            <span>${totalMs ? fmtLatency(totalMs) : ""}</span>
+          </div>
+        </div>
+
+        <!-- Latency Breakdown -->
+        <div class="mp-timing-box">
+          <div class="mp-timing-head">
+            <span>${escHtml(t("mp_latest_route"))} · ${fmtLatency(totalMs)}</span>
+            <span>TTFT: ${fmtLatency(ttftMs)}</span>
+          </div>
+          <div class="mp-timing-bar">
+            <div class="mp-tseg mp-tseg-gw" style="width:${gwPct}%;" title="${escHtml(t('mp_timing_magpie'))}: ${gwMs}ms"></div>
+            <div class="mp-tseg mp-tseg-send" style="width:${sendPct}%;" title="${escHtml(t('mp_timing_send'))}: ${sendMs}ms"></div>
+            <div class="mp-tseg mp-tseg-ttft" style="width:${ttftPct}%;" title="${escHtml(t('mp_timing_ttft'))}: ${waitTtftMs}ms"></div>
+            <div class="mp-tseg mp-tseg-stream" style="width:${streamPct}%;" title="${escHtml(t('mp_timing_stream'))}: ${streamMs}ms"></div>
+          </div>
+          <div class="mp-timing-legend">
+            <div class="mp-leg-item"><span class="mp-leg-dot" style="background:#64d2ff;"></span><span>${escHtml(t('mp_timing_magpie'))}: ${gwMs}ms</span></div>
+            <div class="mp-leg-item"><span class="mp-leg-dot" style="background:#bf5af2;"></span><span>${escHtml(t('mp_timing_send'))}: ${sendMs}ms</span></div>
+            <div class="mp-leg-item"><span class="mp-leg-dot" style="background:#ff9f0a;"></span><span>${escHtml(t('mp_timing_ttft'))}: ${ttftMs}ms</span></div>
+            <div class="mp-leg-item"><span class="mp-leg-dot" style="background:#30d158;"></span><span>${escHtml(t('mp_timing_stream'))}: ${streamMs}ms</span></div>
+          </div>
+        </div>
+
+        <!-- Context Window -->
+        <div class="mp-context-box">
+          <div class="mp-context-head">
+            <span>${escHtml(t("mp_context_window"))}</span>
+            <span>${fmtTokens(usedTokens)} / ${fmtTokens(winTokens)} (${(usedTokens / (winTokens || 1) * 100).toFixed(1)}%)</span>
+          </div>
+          <div class="mp-context-bar">
+            ${partsHtml}
+          </div>
+          <div class="mp-context-legend">
+            ${legendHtml}
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  // Routes stream feed
+  const routesListEl = $("mp-routes-list");
+  if (routesListEl) {
+    if (!routes.length) {
+      routesListEl.innerHTML = `<div class="gempty">${escHtml(t("mp_empty"))}</div>`;
+    } else {
+      routesListEl.innerHTML = routes.slice(0, 30).map(r => {
+        const timeStr = r.at ? new Date(r.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : "—";
+        const st = r.status || 200;
+        const isErr = st >= 400;
+        const isRerouted = (r.tries && r.tries.length > 1) || r.rerouted;
+        const badgeCls = isErr ? "err" : (isRerouted ? "rerouted" : "ok");
+        const badgeTxt = isErr ? `${st}` : (isRerouted ? "REROUTE" : "200");
+
+        const inTok = r.tokens?.input || 0;
+        const outTok = r.tokens?.output || 0;
+        const totalTok = inTok + outTok;
+
+        // Try chain items
+        const chainItems = (r.order || []).map(o => {
+          const provName = o.provider || o.id || "";
+          const isSelected = provName === r.provider;
+          return `<span class="mp-chain-item ${isSelected ? 'selected' : ''}">${escHtml(provName)}</span>`;
+        }).join('<span style="color:var(--text-dim);font-size:10px;">→</span>');
+
+        return `
+          <div class="mp-route-row">
+            <div class="mp-route-row-top">
+              <div class="mp-route-row-main">
+                <span class="mp-rh-badge ${badgeCls}">${badgeTxt}</span>
+                <span class="mp-route-model">${escHtml(r.model || "")}</span>
+                <span class="mp-rh-provider-tag">${escHtml(r.provider || "")}</span>
+              </div>
+              <div class="mp-route-metrics">
+                <span>${fmtLatency(r.ms || 0)}</span>
+                ${r.ttft ? `<span>TTFT ${fmtLatency(r.ttft)}</span>` : ""}
+                <span>${fmtTokens(totalTok)} tk</span>
+                <span style="color:var(--text-dim);">${timeStr}</span>
+              </div>
+            </div>
+            ${chainItems ? `
+              <div class="mp-route-chain">
+                <span style="color:var(--text-dim);font-size:10px;">Route:</span>
+                ${chainItems}
+              </div>
+            ` : ""}
+          </div>
+        `;
+      }).join("");
+    }
+  }
+}
+
+async function refreshMagpieRouting(force = false) {
+  const container = $("agent-view-routing");
+  if (!container || container.hidden) return;
+  const d = await loadMagpieRouting(force);
+  renderMagpieRouting(d);
+}
+
+async function loadMagpieProviders(force = false) {
+  if (BOOT.static && BOOT.magpieProviders && !force) {
+    return BOOT.magpieProviders;
+  }
+  if (!force && magpieProvidersCache) {
+    return magpieProvidersCache;
+  }
+  try {
+    const r = await tlGet("/api/magpie/providers");
+    if (r) {
+      magpieProvidersCache = r;
+      return r;
+    }
+  } catch (e) {
+    console.warn("loadMagpieProviders error:", e);
+  }
+  return magpieProvidersCache || { ok: false, providers: [], presets: {} };
+}
+
+let curProviderFilter = "";
+
+function renderProviderIcon(iconName, fallbackChar = "") {
+  if (!iconName || iconName === "generic") {
+    return `<span class="mp-icon-generic"><svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M8 2.2 13.2 5.1v5.8L8 13.8 2.8 10.9V5.1Z"></path><path d="M8 8v5.8"></path><path d="M2.8 5.1 8 8l5.2-2.9"></path></svg></span>`;
+  }
+  let path = "";
+  if (iconName.startsWith("file:")) {
+    path = "/static/icons/" + iconName.slice(5);
+  } else if (iconName.includes(".")) {
+    path = "/static/icons/" + iconName;
+  } else {
+    path = "/static/icons/" + iconName + ".svg";
+  }
+
+  const fallbackSvg = `<span class=\\'mp-icon-generic\\'><svg viewBox=\\'0 0 16 16\\' width=\\'18\\' height=\\'18\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'1.3\\' stroke-linejoin=\\'round\\'><path d=\\'M8 2.2 13.2 5.1v5.8L8 13.8 2.8 10.9V5.1Z\\'></path><path d=\\'M8 8v5.8\\'></path><path d=\\'M2.8 5.1 8 8l5.2-2.9\\'></path></svg></span>`;
+  return `<img src="${escAttr(path)}" alt="" onerror="this.onerror=null;this.parentElement.innerHTML='${fallbackSvg}';" />`;
+}
+
+function renderMagpieProviders(data) {
+  const el = $("agent-view-providers");
+  if (!el || !data) return;
+  curMagpieProvidersData = data;
+
+  const listEl = $("mp-providers-list");
+  if (!listEl) return;
+
+  const searchInput = $("mp-pv-search");
+  if (searchInput && !searchInput.dataset.bound) {
+    searchInput.dataset.bound = "1";
+    searchInput.addEventListener("input", (e) => {
+      curProviderFilter = (e.target.value || "").trim().toLowerCase();
+      renderMagpieProviders(curMagpieProvidersData);
+    });
+  }
+
+  const provs = data.providers || [];
+  const q = curProviderFilter;
+  const filtered = q ? provs.filter(p => {
+    const name = (p.name || p.id || "").toLowerCase();
+    const user = (p.account?.user || "").toLowerCase();
+    const host = (p.host || "").toLowerCase();
+    return name.includes(q) || user.includes(q) || host.includes(q);
+  }) : provs;
+
+  if (!filtered.length) {
+    listEl.innerHTML = `<div class="gempty" style="padding:32px 16px;">${escHtml(t("mp_empty"))}</div>`;
+    return;
+  }
+
+  listEl.innerHTML = filtered.map(pv => {
+    const isOff = !!pv.off;
+    const acc = pv.account || {};
+    const user = acc.user || "";
+    const plan = acc.plan || "";
+    const activeModels = (pv.active_models_count !== undefined)
+      ? pv.active_models_count
+      : (pv.models ? pv.models.filter(m => m.on).length || pv.models.length : 0);
+    const modelsText = t("mp_models_count", { n: activeModels });
+
+    let subText = "";
+    if (user) {
+      subText = t("mp_signed_in_as", { user }) + " · " + modelsText;
+    } else if (pv.host) {
+      subText = pv.host + " · " + modelsText;
+    } else {
+      subText = modelsText;
+    }
+
+    // Status pill text
+    let statusLabel = "";
+    let isMonoKey = false;
+    if (acc.user || acc.plan) {
+      if (pv.id === "codex") {
+        statusLabel = "ChatGPT " + (plan ? plan.charAt(0).toUpperCase() + plan.slice(1) : "Plus");
+      } else if (plan) {
+        statusLabel = plan;
+      } else if (pv.id === "grok") {
+        statusLabel = "SuperGrok";
+      } else {
+        statusLabel = t("mp_signed_in");
+      }
+    } else if (pv.keyList && pv.keyList.length > 0) {
+      statusLabel = pv.keyList[0].masked || "••••••";
+      isMonoKey = true;
+    } else if (pv.id === "grok") {
+      statusLabel = "SuperGrok";
+    } else {
+      statusLabel = "Free";
+    }
+
+    // Active agents (opencode, hermes)
+    const activeAgents = (pv.agents || []).filter(a => a.current);
+    const usesHtml = activeAgents.map(a => {
+      const aIcon = a.icon || (a.id === "opencode" ? "opencode" : "hermes");
+      return `
+        <span class="mp-pv-use-badge" title="${escHtml(a.name || a.id)}">
+          ${renderProviderIcon(aIcon, (a.name || a.id)[0])}
+        </span>
+      `;
+    }).join("");
+
+    return `
+      <div class="mp-pv-row ${isOff ? 'off' : ''}">
+        <div class="mp-pv-icon-wrap">
+          ${renderProviderIcon(pv.icon, (pv.name || pv.id)[0])}
+        </div>
+        <div class="mp-pv-who">
+          <div class="mp-pv-name">${escHtml(pv.name || pv.id)}</div>
+          <div class="mp-pv-sub">${escHtml(subText)}</div>
+        </div>
+        <div class="mp-pv-right">
+          ${usesHtml ? `<div class="mp-pv-uses">${usesHtml}</div>` : ""}
+          <div class="mp-pv-status-pill ${isMonoKey ? 'mono' : ''}">
+            <span class="mp-pv-status-dot ${isOff ? 'off' : ''}"></span>
+            <span title="${escAttr(statusLabel)}">${escHtml(statusLabel)}</span>
+          </div>
+          <div class="mp-pv-switch ${isOff ? '' : 'on'}">
+            <span class="mp-pv-switch-thumb"></span>
+          </div>
+          <span class="mp-pv-chev">›</span>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+async function refreshMagpieProviders(force = false) {
+  const container = $("agent-view-providers");
+  if (!container || container.hidden) return;
+  const listEl = $("mp-providers-list");
+  if (magpieProvidersCache && !force) {
+    renderMagpieProviders(magpieProvidersCache);
+    return;
+  }
+  if (listEl && (!listEl.children.length || force)) {
+    listEl.innerHTML = `<div class="gempty" style="padding:48px 16px;"><span class="spin" style="display:inline-block;margin-right:8px;">◌</span>${escHtml(t("a_loading"))}</div>`;
+  }
+  const d = await loadMagpieProviders(force);
+  renderMagpieProviders(d);
+}
+
 async function refreshAgentsPage() {
   const el = $("agents-page");
   if (!el || el.hidden) return;
+  if (curAgentTab === "usage") {
+    await refreshMagpieUsage(true);
+    return;
+  }
+  if (curAgentTab === "routing") {
+    await refreshMagpieRouting(true);
+    return;
+  }
+  if (curAgentTab === "providers") {
+    await refreshMagpieProviders(true);
+    return;
+  }
   try { renderRuntimes(await loadRuntimes(true)); }
   catch (e) {
     const cont = $("agent-cards-container");
@@ -4006,7 +5158,118 @@ async function refreshAgentsPage() {
   }
 }
 
+function setupMagpieLinks() {
+  const btnTopMagpie = $("btn-agent-magpie");
+  const btnConsole = $("mp-btn-open-console");
+  if (BOOT.static) {
+    if (btnTopMagpie) btnTopMagpie.hidden = true;
+    if (btnConsole) btnConsole.hidden = true;
+    return;
+  }
+  const mUrl = getMagpieUrl();
+  if (btnTopMagpie) {
+    btnTopMagpie.href = mUrl;
+    btnTopMagpie.hidden = false;
+  }
+  if (btnConsole) {
+    btnConsole.href = mUrl;
+    btnConsole.hidden = false;
+  }
+}
+
+function bindAgentSubnav() {
+  setupMagpieLinks();
+  const subnav = $("agent-subnav");
+  if (subnav && !subnav.dataset.bound) {
+    subnav.dataset.bound = "1";
+    subnav.addEventListener("click", async (e) => {
+      const btn = e.target.closest(".agent-subnav-btn");
+      if (!btn || !btn.dataset.atab) return;
+      subnav.querySelectorAll(".agent-subnav-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      const tab = btn.dataset.atab;
+      curAgentTab = tab;
+      const vRuntimes = $("agent-view-runtimes");
+      const vUsage = $("agent-view-usage");
+      const vRouting = $("agent-view-routing");
+      const vProviders = $("agent-view-providers");
+      if (vRuntimes) vRuntimes.hidden = (tab !== "runtimes");
+      if (vUsage) vUsage.hidden = (tab !== "usage");
+      if (vRouting) vRouting.hidden = (tab !== "routing");
+      if (vProviders) vProviders.hidden = (tab !== "providers");
+
+      if (tab === "usage") {
+        await refreshMagpieUsage();
+      } else if (tab === "routing") {
+        await refreshMagpieRouting();
+      } else if (tab === "providers") {
+        await refreshMagpieProviders();
+      }
+    });
+  }
+
+  const mpFilters = $("mp-period-filters");
+  if (mpFilters && !mpFilters.dataset.bound) {
+    mpFilters.dataset.bound = "1";
+    mpFilters.addEventListener("click", async (e) => {
+      const chip = e.target.closest(".chip");
+      if (!chip || !chip.dataset.mpp) return;
+      mpFilters.querySelectorAll(".chip").forEach(c => c.classList.remove("active"));
+      chip.classList.add("active");
+      curMagpiePeriod = chip.dataset.mpp;
+      await refreshMagpieUsage(true);
+    });
+  }
+
+  const btnMask = $("mp-btn-mask");
+  if (btnMask && !btnMask.dataset.bound) {
+    btnMask.dataset.bound = "1";
+    btnMask.classList.toggle("active", curAccountMasked);
+    btnMask.addEventListener("click", () => {
+      curAccountMasked = !curAccountMasked;
+      btnMask.classList.toggle("active", curAccountMasked);
+      const lbl = $("mp-mask-label");
+      if (lbl) lbl.textContent = curAccountMasked ? t("mp_mask_toggle") : t("mp_show_accounts");
+      document.querySelectorAll(".mp-acc-email").forEach(el => {
+        el.classList.toggle("is-masked", curAccountMasked);
+      });
+    });
+  }
+
+  const btnMode = $("mp-btn-mode");
+  if (btnMode && !btnMode.dataset.bound) {
+    btnMode.dataset.bound = "1";
+    btnMode.classList.toggle("active", curQuotaMode === "remain");
+    btnMode.addEventListener("click", () => {
+      curQuotaMode = (curQuotaMode === "remain" ? "used" : "remain");
+      const lbl = $("mp-mode-label");
+      if (lbl) lbl.textContent = curQuotaMode === "remain" ? t("mp_view_mode_remain") : t("mp_view_mode_used");
+      btnMode.classList.toggle("active", curQuotaMode === "remain");
+      if (curMagpieData && curMagpieData.quotas) {
+        renderMagpieQuotas(curMagpieData.quotas, $("mp-quota-grid"));
+      }
+    });
+  }
+
+  const quotaGrid = $("mp-quota-grid");
+  if (quotaGrid && !quotaGrid.dataset.bound) {
+    quotaGrid.dataset.bound = "1";
+    quotaGrid.addEventListener("click", (e) => {
+      const btn = e.target.closest(".mp-expand-btn");
+      if (!btn || !btn.dataset.target) return;
+      const target = $(btn.dataset.target);
+      if (!target) return;
+      const isHidden = target.hidden;
+      target.hidden = !isHidden;
+      const count = target.querySelectorAll(".mp-account-row").length;
+      btn.textContent = isHidden ? t("mp_collapse_accounts") : t("mp_expand_accounts", { n: count });
+    });
+  }
+}
+
 function bindAgentHubEvents(el, d) {
+  bindAgentSubnav();
+
   const searchInput = $("agent-search");
   if (searchInput && !searchInput.dataset.bound) {
     searchInput.dataset.bound = "1";
@@ -4291,6 +5554,19 @@ async function initAgentsPage() {
   const el = $("agents-page");
   if (!el) return;
   el.hidden = false;  // 双端进入 agent 页即显示(移动页签 / 桌面 cat=agent)
+  bindAgentSubnav();
+  if (BOOT.static && BOOT.magpieUsage) {
+    try { renderMagpieUsage(BOOT.magpieUsage); } catch (e) {}
+  }
+  if (BOOT.static && BOOT.magpieRouting) {
+    try { renderMagpieRouting(BOOT.magpieRouting); } catch (e) {}
+  }
+  if (BOOT.static && BOOT.magpieProviders) {
+    try { renderMagpieProviders(BOOT.magpieProviders); } catch (e) {}
+  }
+  if (!BOOT.static) {
+    loadMagpieProviders().catch(() => {});
+  }
   if (agentsInit) { refreshAgentsPage(); return; }
   agentsInit = true;
   const cards = $("agent-cards-container");
@@ -5484,7 +6760,7 @@ const CATS = [
   ["agent", "tab_agent"], ["svc", "tab_svc"],
 ];
 const CAT_SELS = {
-  home: ["#statuscard", "#sysbar", "#chart-wrap", "#hp-portal-grid"],
+  home: ["#statuscard", "#sysbar", "#chart-wrap", "#hp-portal-grid", "#toolchips"],
   activity: ["#activity-page"],
   tmux: ["#tmux-panel"],
   goal: ["#tmux-panel"],
@@ -5598,6 +6874,7 @@ if (isMobile()) {
 }
 initLogAgentPicker();   // 延后到这里: escHtml 等 const 已初始化(避免 TDZ 崩整页)
 initLanguageMenu();
+setupMagpieLinks();
 load(true);
 renderConnbar();   // 顶栏连接信息(ssh/IP)随首屏渲染, 不等进工具页
 // AI 清理: 首页面板按钮 + 弹层关闭(独立于工具页惰性初始化, 首页直达)

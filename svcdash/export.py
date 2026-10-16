@@ -118,12 +118,36 @@ def _collect_static_snapshot(lang=DEFAULT_LANG):
 
     clean_tl = {lg: sanitize_tools_conf_for_public(tools_conf(), lg) for lg in LANG_KEYS}
 
+    # Magpie 网关数据收集 (用量/路由/供应商)
+    clean_magpie_usage = {}
+    clean_magpie_routing = {}
+    clean_magpie_providers = {}
+    try:
+        from svcdash.magpie import (
+            get_magpie_usage, sanitize_magpie_usage_for_public,
+            get_magpie_routing, sanitize_magpie_routing_for_public,
+            get_magpie_providers, sanitize_magpie_providers_for_public
+        )
+        raw_mp = get_magpie_usage("today", force=True)
+        clean_magpie_usage = {lg: sanitize_magpie_usage_for_public(raw_mp, lg) for lg in LANG_KEYS}
+        raw_routing = get_magpie_routing(force=True)
+        clean_magpie_routing = {lg: sanitize_magpie_routing_for_public(raw_routing, lg) for lg in LANG_KEYS}
+        raw_providers = get_magpie_providers(force=True)
+        clean_magpie_providers = {lg: sanitize_magpie_providers_for_public(raw_providers, lg) for lg in LANG_KEYS}
+    except Exception as e:
+        print(f"[!] 采集 Magpie 数据异常: {e}")
+        clean_magpie_usage = {lg: {} for lg in LANG_KEYS}
+        clean_magpie_routing = {lg: {} for lg in LANG_KEYS}
+        clean_magpie_providers = {lg: {} for lg in LANG_KEYS}
+
     return {
         "now": now, "clean_services": clean_services, "sysdata": sysdata,
         "chart_data": chart_data, "goals_data": goals_data,
         "repos_data": repos_data, "clean_tmux": clean_tmux,
         "clean_runtimes": clean_runtimes, "clean_agent_details": clean_agent_details,
-        "clean_tl": clean_tl,
+        "clean_tl": clean_tl, "clean_magpie_usage": clean_magpie_usage,
+        "clean_magpie_routing": clean_magpie_routing,
+        "clean_magpie_providers": clean_magpie_providers,
     }
 
 
@@ -198,6 +222,9 @@ def gather_static_payload(lang=DEFAULT_LANG, snapshot=None):
         # 通用内容规则，否则 quota.bucket.label 会被误判为私密文本。
         "runtimesData": clean_runtimes,
         "agentDetails": (snapshot.get("clean_agent_details") or {}).get(lang, {}),
+        "magpieUsage": (snapshot.get("clean_magpie_usage") or {}).get(lang, {}),
+        "magpieRouting": (snapshot.get("clean_magpie_routing") or {}).get(lang, {}),
+        "magpieProviders": (snapshot.get("clean_magpie_providers") or {}).get(lang, {}),
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
     }
 
@@ -225,11 +252,14 @@ def export_static(output_dir, lang=DEFAULT_LANG, cname=None):
     out_static = os.path.join(output_dir, "static")
     os.makedirs(out_static, exist_ok=True)
 
-    # 复制静态资源 (app.css, app.js)
+    # 复制静态资源 (app.css, app.js, icons/)
     for fn in ("app.css", "app.js"):
         src = os.path.join(STATIC_DIR, fn)
         if os.path.isfile(src):
             shutil.copy2(src, os.path.join(out_static, fn))
+    icons_src = os.path.join(STATIC_DIR, "icons")
+    if os.path.isdir(icons_src):
+        shutil.copytree(icons_src, os.path.join(out_static, "icons"), dirs_exist_ok=True)
 
     # 各语言页面共用同一份采集快照，避免语言版本之间数据不一致或重复采样。
     snapshot = _collect_static_snapshot(DEFAULT_LANG)

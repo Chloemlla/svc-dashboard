@@ -189,9 +189,8 @@ def render_toolchips(entries, host_header, lang=DEFAULT_LANG):
         f'<a class="chip tchip" href="http://{escape(hostname)}:{port}/" target="_blank" rel="noopener">'
         f'{name} :{port} {icon("ext", 11)}</a>'
         for name, port in TOOL_LINKS if port in ports)
-    if not chips:
-        return ""
-    return f'<div class="filters toolchips" id="toolchips">{chips}</div>'
+    hidden = " hidden" if not chips else ""
+    return f'<div class="filters toolchips" id="toolchips"{hidden}>{chips}</div>'
 def render_events(events, lang=DEFAULT_LANG):
     """最近事件: watchdog 动作 + 完成台账,合并时间倒序。"""
     rows = []
@@ -242,9 +241,14 @@ _LITE_TMUX = (
     '<div class="gpanel" id="tmux-panel">'
     '<div class="tmux-header">'
     '<h2>{{T:tmux_title}} <span class="ghint">{{T:tmux_hint}}</span></h2>'
+    '<div class="tmux-header-actions">'
+    '<button class="btn-ts-action btn-tmux-primary" id="btn-tmux-new-open" type="button">'
+    '{{ICO:term:13}} <span>{{T:tmux_btn_new}}</span>'
+    '</button>'
+    '</div>'
+    '</div>'
     '<div class="tmux-search-wrap">'
     '<input type="search" id="tmux-search" placeholder="{{T:tmux_search_ph}}" autocomplete="off" />'
-    '</div>'
     '</div>'
     '<div class="tmux-summary-stats" id="tmux-stats"></div>'
     '<div class="filters tmux-filters" id="tmux-filters">'
