@@ -227,32 +227,32 @@ try{var _tm=localStorage.getItem("svc-theme");if(_tm==="dark"||_tm==="light")doc
     </div>
   </div>
   <div class="agent-subnav" id="agent-subnav">
-    <button class="agent-subnav-btn active" id="btn-atab-runtimes" data-atab="runtimes" type="button">
-      {{ICO:bolt:13}} <span>{{T:agent_sub_runtimes}}</span>
+    <button class="agent-subnav-btn active" id="btn-atab-routing" data-atab="routing" type="button">
+      {{ICO:branch:13}} <span>{{T:agent_sub_routing}}</span>
     </button>
     <button class="agent-subnav-btn" id="btn-atab-usage" data-atab="usage" type="button">
       {{ICO:chart:13}} <span>{{T:agent_sub_usage}}</span>
     </button>
-    <button class="agent-subnav-btn" id="btn-atab-routing" data-atab="routing" type="button">
-      {{ICO:branch:13}} <span>{{T:agent_sub_routing}}</span>
-    </button>
     <button class="agent-subnav-btn" id="btn-atab-providers" data-atab="providers" type="button">
       {{ICO:box:13}} <span>{{T:agent_sub_providers}}</span>
     </button>
+    <button class="agent-subnav-btn" id="btn-atab-runtimes" data-atab="runtimes" type="button">
+      {{ICO:bolt:13}} <span>{{T:agent_sub_runtimes}}</span>
+    </button>
   </div>
-  <div id="agent-view-runtimes">
-    <div class="agent-kpi-grid" id="agent-kpis"></div>
-    <div id="agent-low-quota-wrap" hidden></div>
-    <div class="filters agent-filters" id="agent-filters">
-      <span class="chip active" data-rtf="all" role="button" tabindex="0">{{T:rt_f_all}} <span id="n-rtf-all"></span></span>
-      <span class="chip" data-rtf="run" role="button" tabindex="0"><span class="agent-status-dot on"></span> {{T:rt_f_run}} <span id="n-rtf-run"></span></span>
-      <span class="chip" data-rtf="tasks" role="button" tabindex="0">{{ICO:terminal:13}} {{T:rt_f_tasks}} <span id="n-rtf-tasks"></span></span>
-      <span class="chip" data-rtf="quota" role="button" tabindex="0">{{ICO:gauge:13}} {{T:rt_f_quota}} <span id="n-rtf-quota"></span></span>
-      <span class="chip" data-rtf="none" role="button" tabindex="0">{{T:rt_f_none}} <span id="n-rtf-none"></span></span>
+  <div id="agent-view-routing">
+    <div class="row-head rt-head-bar">
+      <span class="label">{{T:mp_routing_title}}</span>
+      <span class="rt-livedot" aria-hidden="true"></span>
+      <span class="note">{{T:mp_routing_hint}}</span>
+      <span class="grow"></span>
+      <button class="text rt-mask" id="rtMask" aria-pressed="false" type="button" title="{{T:mp_mask_tip}}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.9 4.2A10.4 10.4 0 0 1 12 4c6.5 0 10 8 10 8a17.6 17.6 0 0 1-2.2 3.2M6.6 6.6C3.9 8.4 2 12 2 12s3.5 8 10 8a9.7 9.7 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2M2 2l20 20"/></svg>
+        <span>{{T:mp_hide_accounts}}</span>
+      </button>
     </div>
-    <div id="agent-cards-container"><div class="gempty">{{T:a_loading}}</div></div>
-    <div id="agent-models-section"></div>
-    <div id="agent-env-section"></div>
+    <section class="rt" id="rt"></section>
+    <div class="rt-more" id="rtMore"></div>
   </div>
   <div id="agent-view-usage" hidden>
     <div class="mp-period-bar">
@@ -311,20 +311,6 @@ try{var _tm=localStorage.getItem("svc-theme");if(_tm==="dark"||_tm==="light")doc
       <div class="mp-accounts-grid" id="mp-accounts-grid"></div>
     </div>
   </div>
-  <div id="agent-view-routing" hidden>
-    <div class="row-head rt-head-bar">
-      <span class="label">{{T:mp_routing_title}}</span>
-      <span class="rt-livedot" aria-hidden="true"></span>
-      <span class="note">{{T:mp_routing_hint}}</span>
-      <span class="grow"></span>
-      <button class="text rt-mask" id="rtMask" aria-pressed="false" type="button" title="{{T:mp_mask_tip}}">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.9 4.2A10.4 10.4 0 0 1 12 4c6.5 0 10 8 10 8a17.6 17.6 0 0 1-2.2 3.2M6.6 6.6C3.9 8.4 2 12 2 12s3.5 8 10 8a9.7 9.7 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2M2 2l20 20"/></svg>
-        <span>{{T:mp_hide_accounts}}</span>
-      </button>
-    </div>
-    <section class="rt" id="rt"></section>
-    <div class="rt-more" id="rtMore"></div>
-  </div>
   <div id="agent-view-providers" hidden>
     <div class="mp-pv-header-bar">
       <div class="mp-pv-search-wrap">
@@ -334,6 +320,20 @@ try{var _tm=localStorage.getItem("svc-theme");if(_tm==="dark"||_tm==="light")doc
     <div class="mp-pv-card-panel">
       <div class="mp-pv-table" id="mp-providers-list"></div>
     </div>
+  </div>
+  <div id="agent-view-runtimes" hidden>
+    <div class="agent-kpi-grid" id="agent-kpis"></div>
+    <div id="agent-low-quota-wrap" hidden></div>
+    <div class="filters agent-filters" id="agent-filters">
+      <span class="chip active" data-rtf="all" role="button" tabindex="0">{{T:rt_f_all}} <span id="n-rtf-all"></span></span>
+      <span class="chip" data-rtf="run" role="button" tabindex="0"><span class="agent-status-dot on"></span> {{T:rt_f_run}} <span id="n-rtf-run"></span></span>
+      <span class="chip" data-rtf="tasks" role="button" tabindex="0">{{ICO:terminal:13}} {{T:rt_f_tasks}} <span id="n-rtf-tasks"></span></span>
+      <span class="chip" data-rtf="quota" role="button" tabindex="0">{{ICO:gauge:13}} {{T:rt_f_quota}} <span id="n-rtf-quota"></span></span>
+      <span class="chip" data-rtf="none" role="button" tabindex="0">{{T:rt_f_none}} <span id="n-rtf-none"></span></span>
+    </div>
+    <div id="agent-cards-container"><div class="gempty">{{T:a_loading}}</div></div>
+    <div id="agent-models-section"></div>
+    <div id="agent-env-section"></div>
   </div>
 </div>
 </div>

@@ -4214,7 +4214,7 @@ function rtMatch(a, f) {
   return true;
 }
 
-let curAgentTab = "runtimes";
+let curAgentTab = "routing";
 let curMagpiePeriod = "today";
 let curQuotaMode = "remain";
 let curAccountMasked = true;
@@ -5456,20 +5456,51 @@ async function loadMagpieProviders(force = false) {
 
 let curProviderFilter = "";
 
+const ICON_ALIASES = {
+  "codex": "codex-color",
+  "claude": "claude-color",
+  "claudecode": "claudecode-color",
+  "deepseek": "deepseek-color",
+  "gemini": "gemini-color",
+  "geminicli": "geminicli-color",
+  "qwen": "qwen-color",
+  "zhipu": "zhipu-color",
+  "volcengine": "volcengine-color",
+  "stepfun": "stepfun-color",
+  "siliconcloud": "siliconcloud-color",
+  "together": "together-color",
+  "antigravity": "antigravity-color",
+  "minimax": "minimax-color",
+  "mistral": "mistral-color",
+  "modelscope": "modelscope-color",
+  "kiro": "kiro-color",
+  "workbuddy": "workbuddy-color",
+  "workbuddy-ai": "workbuddy-color",
+  "ai302": "ai302-color",
+  "aihubmix": "aihubmix-color",
+  "baiducloud": "baiducloud-color",
+  "bedrock": "bedrock-color",
+  "huaweicloud": "huaweicloud-color",
+  "tencentcloud": "tencentcloud-color",
+  "cherryin": "cherryin-color"
+};
+
 function renderProviderIcon(iconName, fallbackChar = "") {
   if (!iconName || iconName === "generic") {
-    return `<span class="mp-icon-generic"><svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M8 2.2 13.2 5.1v5.8L8 13.8 2.8 10.9V5.1Z"></path><path d="M8 8v5.8"></path><path d="M2.8 5.1 8 8l5.2-2.9"></path></svg></span>`;
+    return `<span class="mp-icon-generic"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M8 2.2 13.2 5.1v5.8L8 13.8 2.8 10.9V5.1Z"></path><path d="M8 8v5.8"></path><path d="M2.8 5.1 8 8l5.2-2.9"></path></svg></span>`;
   }
-  let path = "";
-  if (iconName.startsWith("file:")) {
-    path = "/static/icons/" + iconName.slice(5);
-  } else if (iconName.includes(".")) {
-    path = "/static/icons/" + iconName;
-  } else {
-    path = "/static/icons/" + iconName + ".svg";
+  let name = String(iconName).toLowerCase().trim();
+  if (name.startsWith("file:")) {
+    name = name.slice(5);
   }
-
-  const fallbackSvg = `<span class=\\'mp-icon-generic\\'><svg viewBox=\\'0 0 16 16\\' width=\\'18\\' height=\\'18\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'1.3\\' stroke-linejoin=\\'round\\'><path d=\\'M8 2.2 13.2 5.1v5.8L8 13.8 2.8 10.9V5.1Z\\'></path><path d=\\'M8 8v5.8\\'></path><path d=\\'M2.8 5.1 8 8l5.2-2.9\\'></path></svg></span>`;
+  if (name.endsWith(".svg") || name.endsWith(".png")) {
+    name = name.replace(/\.(svg|png)$/, "");
+  }
+  if (ICON_ALIASES[name]) {
+    name = ICON_ALIASES[name];
+  }
+  const path = "/static/icons/" + name + ".svg";
+  const fallbackSvg = `<span class=\\'mp-icon-generic\\'><svg viewBox=\\'0 0 16 16\\' width=\\'16\\' height=\\'16\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'1.3\\' stroke-linejoin=\\'round\\'><path d=\\'M8 2.2 13.2 5.1v5.8L8 13.8 2.8 10.9V5.1Z\\'></path><path d=\\'M8 8v5.8\\'></path><path d=\\'M2.8 5.1 8 8l5.2-2.9\\'></path></svg></span>`;
   return `<img src="${escAttr(path)}" alt="" onerror="this.onerror=null;this.parentElement.innerHTML='${fallbackSvg}';" />`;
 }
 
@@ -5551,7 +5582,7 @@ function renderMagpieProviders(data) {
       const aIcon = a.icon || (a.id === "opencode" ? "opencode" : "hermes");
       return `
         <span class="mp-pv-use-badge" title="${escHtml(a.name || a.id)}">
-          ${renderProviderIcon(aIcon, (a.name || a.id)[0])}
+          <span class="ic">${renderProviderIcon(aIcon, (a.name || a.id)[0])}</span>
         </span>
       `;
     }).join("");
@@ -5559,7 +5590,7 @@ function renderMagpieProviders(data) {
     return `
       <div class="mp-pv-row ${isOff ? 'off' : ''}">
         <div class="mp-pv-icon-wrap">
-          ${renderProviderIcon(pv.icon, (pv.name || pv.id)[0])}
+          <span class="ic">${renderProviderIcon(pv.icon, (pv.name || pv.id)[0])}</span>
         </div>
         <div class="mp-pv-who">
           <div class="mp-pv-name">${escHtml(pv.name || pv.id)}</div>
@@ -5571,10 +5602,6 @@ function renderMagpieProviders(data) {
             <span class="mp-pv-status-dot ${isOff ? 'off' : ''}"></span>
             <span title="${escAttr(statusLabel)}">${escHtml(statusLabel)}</span>
           </div>
-          <div class="mp-pv-switch ${isOff ? '' : 'on'}">
-            <span class="mp-pv-switch-thumb"></span>
-          </div>
-          <span class="mp-pv-chev">›</span>
         </div>
       </div>
     `;
@@ -5669,11 +5696,19 @@ function bindAgentSubnav() {
         await refreshMagpieRouting();
       } else if (tab === "providers") {
         await refreshMagpieProviders();
+      } else if (tab === "runtimes") {
+        if (!rtCache) {
+          const cards = $("agent-cards-container");
+          if (cards) cards.innerHTML = mobileSkelDiv(3);
+          try { renderRuntimes(await loadRuntimes()); } catch (e) {
+            if (cards) cards.innerHTML = esHtml("cpu", t("a_fail", { e: escHtml(e.message) }));
+          }
+        }
       }
     });
     const hashQ = new URLSearchParams(location.hash.replace(/^#/, ""));
-    const initTab = hashQ.get("atab");
-    if (initTab && ["runtimes", "usage", "routing", "providers"].includes(initTab)) {
+    const initTab = hashQ.get("atab") || "routing";
+    if (["routing", "usage", "providers", "runtimes"].includes(initTab)) {
       const targetBtn = subnav.querySelector(`[data-atab="${initTab}"]`);
       if (targetBtn) targetBtn.click();
     }
@@ -6040,11 +6075,19 @@ async function initAgentsPage() {
   }
   if (agentsInit) { refreshAgentsPage(); return; }
   agentsInit = true;
-  const cards = $("agent-cards-container");
-  if (cards) cards.innerHTML = mobileSkelDiv(3);
-  try { renderRuntimes(await loadRuntimes()); }
-  catch (e) {
-    if (cards) cards.innerHTML = esHtml("cpu", t("a_fail", { e: escHtml(e.message) }));
+  if (curAgentTab === "routing") {
+    refreshMagpieRouting().catch(() => {});
+  } else if (curAgentTab === "usage") {
+    refreshMagpieUsage().catch(() => {});
+  } else if (curAgentTab === "providers") {
+    refreshMagpieProviders().catch(() => {});
+  } else {
+    const cards = $("agent-cards-container");
+    if (cards) cards.innerHTML = mobileSkelDiv(3);
+    try { renderRuntimes(await loadRuntimes()); }
+    catch (e) {
+      if (cards) cards.innerHTML = esHtml("cpu", t("a_fail", { e: escHtml(e.message) }));
+    }
   }
 }
 let curAgentDetail = null;
