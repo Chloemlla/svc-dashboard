@@ -327,38 +327,50 @@ def _mask_email(s: str) -> str:
     return re.sub(r"([a-zA-Z0-9_.+-]+)@([a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)", _sub, s)
 
 
+def _public_sub_label(sub, lang="zh"):
+    """模型 sub 标签形如 'Provider · Account': 保留供应商名, 账号部分整体隐藏。"""
+    if not isinstance(sub, str) or not sub:
+        return sub
+    head, sep, _tail = sub.rpartition("·")
+    if not sep:
+        return sub  # 纯供应商名 (DeepSeek / WorkBuddy 等), 不含账号标识
+    return (head.strip() + " · " + red("account", lang)) if head.strip() else red("account", lang)
+
+
 def sanitize_magpie_usage_for_public(usage_data: dict, lang: str = "zh") -> dict:
     """对静态公开版中的 Magpie 流量看板进行安全脱敏：
     - 保留总调用量、费用($)、输入/输出/推理/缓存 Token、小时序列、延迟和模型/智能体名称
-    - 对用户个人邮箱、账号标识与底层绝对路径进行打码脱敏
+    - 账号标识(邮箱/显示名/ID)整体替换为语言化占位符, 由前端统一打马赛克
     """
     if not isinstance(usage_data, dict):
         return usage_data
 
     clean = json.loads(json.dumps(usage_data, ensure_ascii=False))
+    acc_red = red("account", lang)
 
     # 1. 路径隐藏
     if "path" in clean:
         clean["path"] = "~/.config/magpie/usage.jsonl"
 
-    # 2. 账号列表脱敏 (accounts)
+    # 2. 账号列表脱敏: 账号标识与显示名整体隐藏(显示名可能是个人名字, 不能部分打码)
     if "accounts" in clean and isinstance(clean["accounts"], list):
         for acc in clean["accounts"]:
             if isinstance(acc, dict):
-                raw_act = acc.get("account") or ""
-                raw_name = acc.get("name") or ""
-                acc["account"] = _mask_email(raw_act)
-                acc["name"] = _mask_email(raw_name)
-                acc["id"] = _mask_email(acc.get("id") or "")
+                acc["account"] = acc_red
+                acc["name"] = acc_red
+                acc["id"] = acc_red
 
-    # 3. 模型列表脱敏 (models 中的 host / sub)
+    # 3. 模型列表脱敏 (models 中的 id / host / sub)
     if "models" in clean and isinstance(clean["models"], list):
         for m in clean["models"]:
             if isinstance(m, dict):
+                if m.get("id") and "@" in str(m["id"]):
+                    head, _sep, _tail = str(m["id"]).partition("@")
+                    m["id"] = (head.strip() + " @ " + acc_red) if head.strip() else acc_red
                 if m.get("host"):
-                    m["host"] = _mask_email(m["host"])
+                    m["host"] = acc_red
                 if m.get("sub"):
-                    m["sub"] = _mask_email(m["sub"])
+                    m["sub"] = _public_sub_label(m["sub"], lang)
 
     # 4. Caller Keys 脱敏
     if "callerKeys" in clean and isinstance(clean["callerKeys"], list):
@@ -369,16 +381,21 @@ def sanitize_magpie_usage_for_public(usage_data: dict, lang: str = "zh") -> dict
                     k["callerKeyId"] = cid[:4] + "..." + cid[-4:]
                     k["id"] = k["callerKeyId"]
 
-    # 5. Quotas 脱敏 (按账号 user 邮箱脱敏)
+    # 5. Quotas 脱敏: 账号邮箱整体替换为占位符
     if "quotas" in clean and isinstance(clean["quotas"], list):
         for q in clean["quotas"]:
             if isinstance(q, dict):
                 if q.get("user"):
-                    q["user"] = _mask_email(q["user"])
+                    q["user"] = acc_red
+                ci = q.get("checkin")
+                if isinstance(ci, dict):
+                    for ck in ("user", "by"):
+                        if ci.get(ck):
+                            ci[ck] = acc_red
                 if q.get("accounts") and isinstance(q["accounts"], list):
                     for acc in q["accounts"]:
                         if isinstance(acc, dict) and acc.get("user"):
-                            acc["user"] = _mask_email(acc["user"])
+                            acc["user"] = acc_red
 
     return clean
 
@@ -511,10 +528,17 @@ def get_magpie_providers(force=False):
 
 
 def sanitize_magpie_routing_for_public(routing_data: dict, lang: str = "zh") -> dict:
-    """脱敏公开路由数据：打码请求中涉及的邮箱与敏感账号标识，保留 Token、延迟、耗时树与宏观指标。"""
+    """脱敏公开路由数据：账号标识整体替换为语言化占位符(前端打马赛克)，保留 Token、延迟、耗时树与宏观指标。"""
     if not isinstance(routing_data, dict):
         return routing_data
     clean = json.loads(json.dumps(routing_data, ensure_ascii=False))
+    acc_red = red("account", lang)
+
+    # 池成员: who 是账号标识列表(可能是邮箱或个人显示名)
+    if isinstance(clean.get("pools"), list):
+        for p in clean["pools"]:
+            if isinstance(p, dict) and p.get("who"):
+                p["who"] = [acc_red for _ in p["who"]]
 
     routes = clean.get("routes", [])
     if isinstance(routes, list):
@@ -523,24 +547,18 @@ def sanitize_magpie_routing_for_public(routing_data: dict, lang: str = "zh") -> 
                 continue
             if r.get("conv") and len(str(r["conv"])) > 16:
                 r["conv"] = r["conv"][:8] + "..." + r["conv"][-4:]
-            for o in r.get("order") or []:
-                if isinstance(o, dict):
+            for coll in ("order", "left", "tries"):
+                for o in r.get(coll) or []:
+                    if not isinstance(o, dict):
+                        continue
                     if o.get("id"):
-                        o["id"] = _mask_email(str(o["id"]))
+                        o["id"] = acc_red
                     if o.get("who"):
-                        o["who"] = _mask_email(str(o["who"]))
-            for l in r.get("left") or []:
-                if isinstance(l, dict):
-                    if l.get("id"):
-                        l["id"] = _mask_email(str(l["id"]))
-                    if l.get("who"):
-                        l["who"] = _mask_email(str(l["who"]))
-            for tr in r.get("tries") or []:
-                if isinstance(tr, dict):
-                    if tr.get("id"):
-                        tr["id"] = _mask_email(str(tr["id"]))
-                    if tr.get("who"):
-                        tr["who"] = _mask_email(str(tr["who"]))
+                        o["who"] = acc_red
+                    # 429 冷却记录: key 为 账号邮箱/模型 组合键
+                    rest = o.get("rest")
+                    if isinstance(rest, dict) and rest.get("key"):
+                        rest["key"] = acc_red
             if r.get("prompt") and isinstance(r["prompt"], dict):
                 parts = r["prompt"].get("parts") or []
                 for p in parts:
@@ -555,10 +573,11 @@ def sanitize_magpie_routing_for_public(routing_data: dict, lang: str = "zh") -> 
 
 
 def sanitize_magpie_providers_for_public(providers_data: dict, lang: str = "zh") -> dict:
-    """脱敏公开供应商数据：打码个人邮箱与登录凭据，保留模型、配额类型与开关状态。"""
+    """脱敏公开供应商数据：账号标识整体替换为语言化占位符，保留模型、配额类型与开关状态。"""
     if not isinstance(providers_data, dict):
         return providers_data
     clean = json.loads(json.dumps(providers_data, ensure_ascii=False))
+    acc_red = red("account", lang)
 
     for p in clean.get("providers", []):
         if not isinstance(p, dict):
@@ -568,10 +587,10 @@ def sanitize_magpie_providers_for_public(providers_data: dict, lang: str = "zh")
         acc = p.get("account")
         if isinstance(acc, dict):
             if acc.get("user"):
-                acc["user"] = _mask_email(str(acc["user"]))
+                acc["user"] = acc_red
             for l in acc.get("logins") or []:
                 if isinstance(l, dict) and l.get("user"):
-                    l["user"] = _mask_email(str(l["user"]))
+                    l["user"] = acc_red
 
     return clean
 

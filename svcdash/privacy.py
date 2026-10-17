@@ -207,6 +207,15 @@ def sanitize_tmux_for_public(tmux_data: dict, lang: str = "zh") -> dict:
                 if p.get("command"):
                     p["command"] = sanitize_text(p["command"])
 
+    # 扁平 panes 列表 (tmuxData.panes): 与 sessions 内结构一致, 同样彻底屏蔽
+    for p in clean.get("panes") or []:
+        if isinstance(p, dict):
+            p["preview"] = [" " + red("term", lang) + " "]
+            if p.get("cwd"):
+                p["cwd"] = HOME_DIR_RE.sub("~", p["cwd"])
+            if p.get("command"):
+                p["command"] = sanitize_text(p["command"])
+
     # 清洗 watchdog 关联的 resume 命令与目标
     for s in sessions:
         if s.get("goal"):
@@ -423,11 +432,17 @@ def red(kind, lang="zh", **kw):
 
 def redact_marker_re(lang="zh") -> str:
     """JS 正则 source: 匹配该语言下所有脱敏占位符(含 {n} 参数化模板)。
-    注入静态快照 BOOT.redactRe, 前端据此给所有脱敏文本打马赛克。"""
+    注入静态快照 BOOT.redactRe, 前端据此给所有脱敏文本打马赛克。
+    末尾两个兜底与语言无关: 任何含脱敏关键词的方括号占位
+    (含发布器后处理产生的 [邮箱已隐藏]/[挂载路径已隐藏] 等),
+    以及部分打码残留 (xx*** / xx***x), 一律打码。"""
     idx = _RED_INDEX.get(lang, 0)
     parts = []
     for vals in _RED_L10N.values():
         s = re.escape(vals[idx])
         s = s.replace(r"\{n\}", r"\d+")
         parts.append(s)
+    parts.append(r"\[[^\[\]\n]{0,60}?(?:已脱敏|已隐藏|已屏蔽|非公開|[Rr]edacted|[Hh]idden)\]")
+    parts.append(r"\b[A-Za-z0-9]{1,4}\*\*\*[A-Za-z0-9]{0,3}")
+    parts.append(r"\*{3}REDACTED\*{3}")
     return "|".join(parts)

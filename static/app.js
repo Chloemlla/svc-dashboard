@@ -7233,10 +7233,13 @@ window.addEventListener("hashchange", () => {   // 手改 hash/后退也跟随
 
 // --- 静态快照: 所有脱敏占位符打马赛克(只读, 不可取消) ---
 // BOOT.redactRe 由服务端按语言生成(privacy.redact_marker_re), 覆盖全部占位文案
+// BOOT.redactRe 由服务端按语言生成, 覆盖全部脱敏占位符; 兜底正则兜住发布器后处理产生的标记
+const FALLBACK_REDACT_RE = "\\[[^\\[\\n]{0,60}?(?:已脱敏|已隐藏|已屏蔽|非公開|redacted|hidden)\\]|\\b[A-Za-z0-9]{1,4}\\*{3}[A-Za-z0-9]{0,3}|\\*{3}REDACTED\\*{3}";
 let _redactRe = null;
 if (BOOT.static && BOOT.redactRe) {
   try { _redactRe = new RegExp(BOOT.redactRe, "g"); } catch (e) { _redactRe = null; }
 }
+if (!_redactRe) _redactRe = new RegExp(FALLBACK_REDACT_RE, "g");
 function applyStaticRedaction(root) {
   if (!_redactRe || !root) return;
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
