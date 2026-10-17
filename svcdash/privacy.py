@@ -196,6 +196,9 @@ def sanitize_tmux_for_public(tmux_data: dict, lang: str = "zh") -> dict:
         if s.get("name"):
             s["name"] = _public_session_id(s["name"])
         for w in s.get("windows") or []:
+            # 窗口名脱敏: tmux 默认窗口名常为 OS 用户名或长命令, 公网不暴露
+            if w.get("name"):
+                w["name"] = red("content", lang)
             for p in w.get("panes") or []:
                 # 终端输出: 公网只读模式下完全屏蔽终端捕获文本
                 p["preview"] = [" " + red("term", lang) + " "]
