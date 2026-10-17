@@ -4849,6 +4849,17 @@ function renderMagpieRouting(data) {
   const topEl = document.createElement("div");
   topEl.className = "rt-top";
   const orderList = curRoute.order || [];
+  // 座位键与原版 magpie routing.js 一致(id+model), 精确匹配不到时回退 id:
+  // 旧写法用 tr.who === w.who 兜底, 而 tries 根本没有 who 字段, 于是
+  // undefined === undefined 把所有无 who 的座位都判成命中(实测 13/55 行全绿)
+  const seatKey = (x) => (x.id || "") + "\u0000" + (x.model || "");
+  const tryState = { trying: new Set(), answered: new Set() };
+  for (const tr of (curRoute.tries || [])) {
+    const hit = orderList.find(x => seatKey(x) === seatKey(tr)) || orderList.find(x => x.id && x.id === tr.id);
+    const k = hit ? seatKey(hit) : seatKey(tr);
+    if (!tr.done) tryState.trying.add(k);                            // 正在问它: 亮
+    else if ((tr.status || 0) < 400) tryState.answered.add(k);       // 它答了: 亮
+  }                                                                  // 报错转交/休息的座位不亮
   const enabledCount = orderList.filter(x => !x.fallback).length || orderList.length || 30;
   topEl.innerHTML = `
     <div class="rt-what"><b>${escHtml(group.name || curRoute.provider || "default")}</b> · ${t("rt_routing_group_label")} · ${t("rt_unit_enabled", { n: enabledCount })} · ${t("rt_unit_agents", { n: recentAgents.length })}</div>
@@ -4929,6 +4940,12 @@ function renderMagpieRouting(data) {
         <i style="margin-left:auto;">${t("rt_unit_available", { n: g.items.filter(x => !x.rest).length })}</i>
       `;
       const subWire = document.createElementNS(NS, "path");
+      // 悬停分组行同样点亮它的连线
+      subLi.addEventListener("mouseenter", () => {
+        subWire.style.setProperty("--agent", rtHue(curRoute.agent));
+        subWire.classList.add("lit");
+      });
+      subLi.addEventListener("mouseleave", () => subWire.classList.remove("lit"));
       wiresSvg.appendChild(subWire);
       subLi.__wire = subWire;
       acctsEl.appendChild(subLi);
@@ -4937,8 +4954,10 @@ function renderMagpieRouting(data) {
     g.items.forEach(w => {
       const rowLi = document.createElement("li");
       if (g.items.length > 1) rowLi.dataset.up = g.prov;
-      const isWinner = curRoute.tries && curRoute.tries.some(tr => (tr.id === w.id || tr.who === w.who || tr.who === w.id));
-      const isTrying = isWinner && !curRoute.done;
+      const rkey = seatKey(w);
+      const isTrying = tryState.trying.has(rkey);
+      const isAnswered = tryState.answered.has(rkey);
+      const isWinner = isTrying || isAnswered;
       const isResting = !!w.rest;
 
       if (isWinner) rowLi.classList.add("on");
@@ -4946,7 +4965,7 @@ function renderMagpieRouting(data) {
 
       let stText = "";
       if (isTrying) stText = t("rt_answering");
-      else if (isWinner && curRoute.done) stText = t("rt_answered");
+      else if (isAnswered) stText = t("rt_answered");
       else if (isResting) stText = t("rt_resting");
       else if (w.known && w.used !== undefined) {
         const remain = Math.max(0, 100 - Math.round(w.used));
@@ -4981,6 +5000,12 @@ function renderMagpieRouting(data) {
         rowWire.classList.add("live");
         rowWire.style.setProperty("--agent", rtHue(curRoute.agent));
       }
+      // 悬停点亮该行的连线(默认全灰, 指到哪条哪条变绿): .lit 样式早就在 CSS 里
+      rowLi.addEventListener("mouseenter", () => {
+        rowWire.style.setProperty("--agent", rtHue(curRoute.agent));
+        rowWire.classList.add("lit");
+      });
+      rowLi.addEventListener("mouseleave", () => rowWire.classList.remove("lit"));
       wiresSvg.appendChild(rowWire);
       rowLi.__wire = rowWire;
       acctsEl.appendChild(rowLi);
