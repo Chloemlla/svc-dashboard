@@ -78,7 +78,9 @@ git -C "$WORK_DIR" init -q
 # local git user.name is a case variant of such a fragment, and the hook's
 # allowlist comparison is case-sensitive while its matching is not. Longer
 # values — the global git email in particular — are deliberately NOT allowed,
-# so a future leak of them is still blocked.
+# so a future leak of them is still blocked. "svc-dashboard static publisher"
+# is this script's own bot commit identity, which the snapshot's commit feed
+# intentionally shows (it is not a personal identifier).
 PUBLIC_HANDLE="${SVC_DASHBOARD_PUBLIC_HANDLE:-iamcheyan}"
 PUBLIC_IDENTIFIERS=$(python3 - "$PUBLIC_HANDLE" <<'PY'
 import os, subprocess, sys
@@ -87,7 +89,7 @@ values = [os.environ.get("USER", ""), os.path.basename(os.path.expanduser("~"))]
 for key in ("user.name", "user.email"):
     values.append(subprocess.run(["git", "config", "--global", "--get", key],
                                  capture_output=True, text=True).stdout.strip())
-explicit = [handle, "cheyan", "tetsuya"]
+explicit = [handle, "cheyan", "tetsuya", "svc-dashboard static publisher"]
 fragments = [value for value in values if value and value.casefold() in handle]
 print("\n".join(dict.fromkeys([*explicit, *fragments])))
 PY
