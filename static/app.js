@@ -4757,9 +4757,13 @@ function layoutRoutingWires() {
   };
 
   const subs = stage.querySelectorAll(".rt-sub");
+  // 窄屏(移动): 账号列表在 hub 下方纵向铺开且可内滚, hub→行 的连线会贯穿整个
+  // 列表造成线网噪声且滚动后失真, 只保留 agent→hub 的连线; 行状态由点/条/文案表达
+  const narrow = mqMobile.matches;
   subs.forEach(sub => {
     const wire = sub.__wire;
     if (!wire) return;
+    if (narrow) { wire.setAttribute("d", ""); return; }
     const upKey = sub.dataset.up;
     const upSub = upKey ? stage.querySelector(`.rt-sub[data-key="${upKey}"]`) : null;
     wire.setAttribute("d", upSub ? fromSub(b(upSub), b(sub)) : fromHub(b(sub)));
@@ -4769,10 +4773,19 @@ function layoutRoutingWires() {
   rowItems.forEach(row => {
     const wire = row.__wire;
     if (!wire) return;
+    if (narrow) { wire.setAttribute("d", ""); return; }
     const upKey = row.dataset.up;
     const upSub = upKey ? stage.querySelector(`.rt-sub[data-key="${upKey}"]`) : null;
     wire.setAttribute("d", upSub ? fromSub(b(upSub), b(row)) : fromHub(b(row)));
   });
+}
+
+/* 移动: 路由账号列表限高内滚, 未滚到底时底部渐隐(与 .filters 同款提示) */
+function rtAcctsFade(list) {
+  if (!list) return;
+  const scrollable = list.scrollHeight > list.clientHeight + 4;
+  const atEnd = list.scrollTop + list.clientHeight >= list.scrollHeight - 8;
+  list.classList.toggle("rt-fade-b", scrollable && !atEnd);
 }
 
 function renderMagpieRouting(data) {
@@ -5261,10 +5274,10 @@ function renderMagpieRouting(data) {
                 <span>${escHtml(it.plan || "")}</span>
               </div>
               <div class="tally">
-                <span>${t("rt_remain_pct", { n: Math.max(0, 100 - (it.used || 0)) })} · ${it.renews ? t("rt_renews_days", { n: 15 }) : t("rt_ready")}</span>
+                <span>${t("rt_remain_pct", { n: Math.round(Math.min(100, Math.max(0, 100 - (it.used || 0)))) })} · ${it.renews ? t("rt_renews_days", { n: 15 }) : t("rt_ready")}</span>
                 <span>${escHtml(it.model || "")}</span>
               </div>
-              <div class="bar"><i style="width:${Math.max(0, 100 - (it.used || 0))}%;"></i></div>
+              <div class="bar"><i style="width:${Math.round(Math.min(100, Math.max(0, 100 - (it.used || 0))))}%;"></i></div>
             </div>
           `).join("")}
         `;
@@ -5296,6 +5309,12 @@ function renderMagpieRouting(data) {
 
   requestAnimationFrame(() => {
     layoutRoutingWires();
+    // 列表限高内滚: 滚动态更新底部渐隐(首次渲染后先按初始位置算一次)
+    const accts = box.querySelector(".rt-accts");
+    if (accts) {
+      accts.addEventListener("scroll", () => rtAcctsFade(accts), { passive: true });
+      rtAcctsFade(accts);
+    }
   });
 
   if (!routingResizeObs && window.ResizeObserver) {
@@ -6675,7 +6694,8 @@ function drawChart() {
   ctx.fillStyle = CH.cpu; ctx.fillText("CPU " + Math.round(lastD.cpu || 0) + "%", 8, 16);
   ctx.fillStyle = CH.mem; ctx.fillText("mem " + Math.round(lastD.mem || 0) + "%", 8, 32);
   ctx.fillStyle = CH.swap; ctx.fillText("swap " + Math.round(lastD.swap || 0) + "%", 8, 48);
-  ctx.fillStyle = CH.load; ctx.textAlign = "right"; ctx.fillText("load " + maxL.toFixed(1), w - 8, 16); ctx.textAlign = "left";
+  // load 标签也放左侧第四行: 放右上角会压在采样点不足时靠右聚拢的负载点上
+  ctx.fillStyle = CH.load; ctx.fillText("load " + maxL.toFixed(1), 8, 64);
 }
 if (chart) {
   window.addEventListener("resize", () => requestAnimationFrame(drawChart));
@@ -7219,7 +7239,7 @@ window.addEventListener("hashchange", () => {   // 手改 hash/后退也跟随
     el.classList.toggle("hf-l", el.scrollLeft > 1);
     el.classList.toggle("hf-r", el.scrollLeft < max - 1);
   };
-  document.querySelectorAll(".filters").forEach(el => {
+  document.querySelectorAll(".filters, .agent-subnav").forEach(el => {
     upd(el);
     el.addEventListener("scroll", () => upd(el), { passive: true });
     if (window.ResizeObserver) {
@@ -7305,7 +7325,10 @@ if (BOOT.static && _redactRe) {
 // --- 启动 ---
 regroupPages();          // 手机: 分组进 6 页; 桌面: 保持原序
 if (isMobile()) {
-  setPage(0, { first: true });
+  // 移动端也解析 #cat= 深链(书签/分享链接直达指定页; 无 hash 保持首页)
+  const mCat = catFromHash();
+  const mIdx = mCat ? CATS.findIndex(x => x[0] === mCat) : 0;
+  setPage(mIdx >= 0 ? mIdx : 0, { first: true });
   applyAutoSec();
 } else {
   // 日志/agent 页不再硬锁 hidden: 初始由 HTML hidden 属性遮蔽, 首次 setCat 进入时解除

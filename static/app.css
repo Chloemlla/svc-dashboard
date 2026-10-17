@@ -961,6 +961,14 @@
                                      mask-image: linear-gradient(to left, #000 0, #000 calc(100% - var(--hf)), transparent 100%); }
     .filters.hf-ov.hf-l.hf-r { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--hf), #000 calc(100% - var(--hf)), transparent 100%);
                                mask-image: linear-gradient(to right, transparent 0, #000 var(--hf), #000 calc(100% - var(--hf)), transparent 100%); }
+    /* agent 子页签条同款渐隐: 右侧还有页签时露出可滑提示 */
+    .agent-subnav.hf-ov { --hf: 22px; }
+    .agent-subnav.hf-ov.hf-r:not(.hf-l) { -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - var(--hf)), transparent 100%);
+                                          mask-image: linear-gradient(to right, #000 0, #000 calc(100% - var(--hf)), transparent 100%); }
+    .agent-subnav.hf-ov.hf-l:not(.hf-r) { -webkit-mask-image: linear-gradient(to left, #000 0, #000 calc(100% - var(--hf)), transparent 100%);
+                                          mask-image: linear-gradient(to left, #000 0, #000 calc(100% - var(--hf)), transparent 100%); }
+    .agent-subnav.hf-ov.hf-l.hf-r { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--hf), #000 calc(100% - var(--hf)), transparent 100%);
+                                    mask-image: linear-gradient(to right, transparent 0, #000 var(--hf), #000 calc(100% - var(--hf)), transparent 100%); }
 
     /* 服务列表 → 卡片(头行右侧显式 44px 圆形 复制/打开 按钮, 无滑扫手势) */
     #svc thead { display: none; }
@@ -1806,6 +1814,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 .btn-tmux-act {
   display: inline-flex;
@@ -1821,6 +1830,8 @@
   cursor: pointer;
   transition: all .15s ease;
   user-select: none;
+  white-space: nowrap;  /* CJK 可在字间折行: 防按钮被 flex 挤压成一字一行的竖条 */
+  flex: none;
 }
 .btn-tmux-act:hover {
   background: var(--bg-panel);
@@ -2297,6 +2308,10 @@ a.btn-agent-top {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+@media (max-width: 640px) {
+  /* 额度窗口窄屏单列: 两列时重置文案在 ~155px 列内折行(孤字"后"), 全宽更清楚 */
+  .mp-win-col { flex: 1 1 100%; }
 }
 .mp-win-top {
   display: flex;
@@ -3047,6 +3062,14 @@ a.btn-agent-top {
 @media (max-width: 768px) {
   .rt-stage { grid-template-columns: 1fr 1fr; column-gap: 16px; row-gap: 18px; padding: 14px 0; }
   .rt-accts { grid-column: 1 / -1; padding-left: 0; }
+  /* 账号列表限高内滚: 路由地图保持一屏可视, 不拖长整页 */
+  .rt-accts { max-height: min(480px, calc(100dvh - 400px)); overflow-y: auto; overscroll-behavior: contain;
+              scrollbar-width: thin; scrollbar-color: var(--chip-border, rgba(128,128,128,.3)) transparent; }
+  .rt-accts::-webkit-scrollbar { width: 4px; }
+  .rt-accts::-webkit-scrollbar-thumb { background: var(--chip-border, rgba(128,128,128,.3)); border-radius: 2px; }
+  /* 未滚到底时底部渐隐, 提示还有内容(滚到底自动消失) */
+  .rt-accts.rt-fade-b { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent 100%);
+                        mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent 100%); }
   .rt-accts li { grid-template-columns: 8px minmax(0, 1fr); padding: 8px 10px; }
   .rt-accts em { grid-column: 2; white-space: normal; }
   .rt-accts .bar { grid-column: 2; }
@@ -3318,6 +3341,10 @@ button.rt-session { cursor: pointer; }
 .rt-group .nm code.mdl { font: var(--code-style, normal) 500 11px/1.5 var(--code-font, var(--code)); font-stretch: var(--code-stretch, 100%); color: var(--fg-2); background: var(--card-2); border-radius: 5px; padding: 0 5px; white-space: nowrap; }
 .rt-group .nm small.auto { font-size: 11px; color: var(--faint); white-space: nowrap; }
 .rt-group .mem { margin-top: 2px; font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 768px) {
+  /* 路由组模型列表窄屏换行, 避免整行截断(需放在基础规则之后) */
+  .rt-group .mem { white-space: normal; overflow-wrap: anywhere; }
+}
 /* a pattern the group finds models by, and how many it matches now */
 .rt-group .mem.pat code, .rt-pats code { font: var(--code-style, normal) 500 11px/1.5 var(--code-font, var(--code)); font-stretch: var(--code-stretch, 100%); color: var(--fg-2); }
 .rt-group .mem.pat.none, .rt-pats .fbrow.none small { color: var(--amber); }
