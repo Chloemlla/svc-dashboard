@@ -14,6 +14,21 @@ from svcdash.manage import MANAGE_UNITS
 from svcdash.config import AUTO_REFRESH_SEC
 
 _STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
+_icon_files_cache = {"t": 0.0, "files": None}
+
+
+def icon_files():
+    """static/icons 下的文件名清单(30s 缓存), 注入 BOOT.iconFiles 供前端判断图标文件是否存在。"""
+    now = time.time()
+    if _icon_files_cache["files"] is not None and now - _icon_files_cache["t"] < 30:
+        return _icon_files_cache["files"]
+    try:
+        files = sorted(os.listdir(os.path.join(_STATIC_DIR, "icons")))
+    except OSError:
+        files = []
+    _icon_files_cache["t"] = now
+    _icon_files_cache["files"] = files
+    return files
 # 事件类型 -> (图标, 语义色 class, i18n key)。前端 EV_META 与此同构。
 KIND_META = {
     "complete": ("ok", "t-green", "evk_complete"),
@@ -247,9 +262,6 @@ _LITE_TMUX = (
     '</button>'
     '</div>'
     '</div>'
-    '<div class="tmux-search-wrap">'
-    '<input type="search" id="tmux-search" placeholder="{{T:tmux_search_ph}}" autocomplete="off" />'
-    '</div>'
     '<div class="tmux-summary-stats" id="tmux-stats"></div>'
     '<div class="filters tmux-filters" id="tmux-filters">'
     '<span class="chip active" data-tf="all" role="button" tabindex="0">{{T:act_all}} <span id="n-tf-all"></span></span>'
@@ -369,6 +381,7 @@ def render_html(host_header, entries, updated_ts, lang=DEFAULT_LANG, sysdata=Non
     boot = {"auto": AUTO_REFRESH_SEC, "lang": lang, "tsMode": bool(ts_mode),
             "t": L10N.get(lang, L10N[DEFAULT_LANG]),
             "icons": ICONS,
+            "iconFiles": icon_files(),
             "tl": tools_conf(),
             "token": token}
     return body.replace("{{BOOT_JSON}}", json.dumps(boot, ensure_ascii=False), 1)

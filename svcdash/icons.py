@@ -73,6 +73,15 @@ ICONS = {
     "mikata": '<circle cx="8" cy="8" r="6.5"/>'
               '<path d="M4.2 8C6.2 5.6 9.8 5.6 11.8 8M4.2 8C6.2 10.4 9.8 10.4 11.8 8"/>'
               '<circle cx="8" cy="8" r="1.4" fill="currentColor" stroke="none"/>',
+    "bot":      '<rect x="3" y="5.4" width="10" height="7.4" rx="1.6"/><path d="M8 5.4V3.4"/><circle cx="8" cy="2.7" r="0.9"/><path d="M6.1 9.2h.01M9.9 9.2h.01"/>',
+    "target":   '<circle cx="8" cy="8" r="6.2"/><circle cx="8" cy="8" r="2.8"/><circle cx="8" cy="8" r="0.7" fill="currentColor" stroke="none"/>',
+    "expand":   '<path d="M9.5 2.8h3.7v3.7M13.2 2.8 9.6 6.4M6.5 13.2H2.8V9.5M2.8 13.2l3.6-3.6"/>',
+    "check":    '<path d="m3.4 8.6 3.1 3.1 6.1-7"/>',
+    "book":     '<path d="M3.2 2.8c2-.9 4.2-.9 4.8 0 .6-.9 2.8-.9 4.8 0v10.4c-2-.9-4.2-.9-4.8 0-.6-.9-2.8-.9-4.8 0Z"/><path d="M8 3.2v10"/>',
+    "message":  '<path d="M2.6 3.2h10.8v8.4H7.4L4.4 14.2v-2.6H2.6Z"/><path d="M5.4 6h5.2M5.4 8.2h3.2"/>',
+    "share":    '<circle cx="4" cy="8" r="1.8"/><circle cx="12" cy="3.8" r="1.8"/><circle cx="12" cy="12.2" r="1.8"/><path d="m5.6 7.1 4.8-2.5M5.6 8.9l4.8 2.5"/>',
+    "terminal": '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="m4.8 6.6 2.4 1.9-2.4 1.9M8.8 10.4h3"/>',
+    "tool":     '<circle cx="8" cy="8" r="2.4"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6 11 5M5 11l-1.4 1.4"/>',
 }
 _ICO_PAT = re.compile(r"\{\{ICO:([a-z0-9_]+)(?::(\d+))?\}\}")
 

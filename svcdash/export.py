@@ -7,7 +7,7 @@ from svcdash import procscan, sysinfo, goals, repos, tasks, agents
 from svcdash.config import STATIC_DIR, DEFAULT_LANG
 from svcdash.i18n import L10N, LANG_KEYS
 from svcdash.icons import ICONS
-from svcdash.render import _render_shell_core, _svc_rows
+from svcdash.render import _render_shell_core, _svc_rows, icon_files
 from svcdash.tools import tools_conf
 
 
@@ -19,7 +19,8 @@ from svcdash.privacy import (  # noqa: F401
     deep_sanitize,
     scan_for_secrets,
     mask_secret,
-    sanitize_text
+    sanitize_text,
+    redact_marker_re,
 )
 
 
@@ -210,6 +211,8 @@ def gather_static_payload(lang=DEFAULT_LANG, snapshot=None):
         "tsMode": False,
         "t": L10N.get(lang, L10N.get(DEFAULT_LANG, {})),
         "icons": ICONS,
+        "iconFiles": icon_files(),
+        "redactRe": redact_marker_re(lang),
         "tl": clean_tl,
         "apiData": {"updated": now, "services": clean_services},
         "sysData": sysdata,

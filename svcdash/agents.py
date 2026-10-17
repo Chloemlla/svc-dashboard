@@ -1,4 +1,4 @@
-import glob, json, os, re, secrets, subprocess, time
+import glob, json, os, re, secrets, subprocess, threading, time
 from datetime import datetime
 from svcdash.i18n import t, DEFAULT_LANG
 # ---------------- OMP Goal 状态 ----------------
@@ -237,6 +237,8 @@ def scan_codex():
 # 全量会话/窗格:会话、窗格、命令、标题、cwd、尺寸、活动状态。
 _tmux_cache = {"t": 0.0, "data": None}
 _tmux_full_cache = {"t": 0.0, "data": None}
+_tmux_lock = threading.Lock()
+_tmux_full_lock = threading.Lock()
 
 
 def _tmux_exec(args, timeout=5):
@@ -266,6 +268,15 @@ def scan_tmux():
     now = time.time()
     if _tmux_cache["data"] is not None and now - _tmux_cache["t"] < 5:
         return _tmux_cache["data"]
+    with _tmux_lock:
+        now = time.time()
+        if _tmux_cache["data"] is not None and now - _tmux_cache["t"] < 5:
+            return _tmux_cache["data"]
+        return _scan_tmux_do()
+
+
+def _scan_tmux_do():
+    now = time.time()
     panes = []
     act_map = {}
     try:
@@ -304,7 +315,15 @@ def scan_tmux_full():
     now = time.time()
     if _tmux_full_cache["data"] is not None and now - _tmux_full_cache["t"] < 4:
         return _tmux_full_cache["data"]
+    with _tmux_full_lock:
+        now = time.time()
+        if _tmux_full_cache["data"] is not None and now - _tmux_full_cache["t"] < 4:
+            return _tmux_full_cache["data"]
+        return _scan_tmux_full_do()
 
+
+def _scan_tmux_full_do():
+    now = time.time()
     s_raw = _tmux_run(["list-sessions", "-F", "#{session_name}|#{session_windows}|#{session_created}|#{session_attached}|#{session_activity}"])
     w_raw = _tmux_run(["list-windows", "-a", "-F", "#{session_name}|#{window_index}|#{window_name}|#{window_active}|#{window_flags}|#{window_panes}"])
     p_raw = _tmux_run(["list-panes", "-a", "-F", "#{session_name}|#{window_index}|#{pane_index}|#{pane_title}|#{pane_current_command}|#{pane_current_path}|#{pane_pid}|#{pane_active}|#{pane_width}x#{pane_height}"])

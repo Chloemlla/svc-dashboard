@@ -416,3 +416,15 @@ def red(kind, lang="zh", **kw):
     vals = _RED_L10N.get(kind) or _RED_L10N["content"]
     s = vals[_RED_INDEX.get(lang, 0)]
     return s.format(**kw) if kw else s
+
+
+def redact_marker_re(lang="zh") -> str:
+    """JS 正则 source: 匹配该语言下所有脱敏占位符(含 {n} 参数化模板)。
+    注入静态快照 BOOT.redactRe, 前端据此给所有脱敏文本打马赛克。"""
+    idx = _RED_INDEX.get(lang, 0)
+    parts = []
+    for vals in _RED_L10N.values():
+        s = re.escape(vals[idx])
+        s = s.replace(r"\{n\}", r"\d+")
+        parts.append(s)
+    return "|".join(parts)

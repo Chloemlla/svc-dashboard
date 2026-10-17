@@ -207,7 +207,7 @@ def _get_local_agent_quotas() -> list:
             local_cards.append({
                 "provider": "antigravity",
                 "name": "Antigravity",
-                "icon": "spark",
+                "icon": "antigravity-color",
                 "plan": "Google Cloud Code",
                 "user": user,
                 "windows": windows,

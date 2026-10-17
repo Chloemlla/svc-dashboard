@@ -387,9 +387,6 @@ function renderRepos(d) {
       </div>`;
     }).join("");
   }
-  if ($("act-repos-bar")) {
-    renderActivityPage();
-  }
 }
 // --- Agent 操作轨迹详情页(全屏浮层): 大号14天双行条 + 图例 + 类别筛选 + 事件流 ---
 const TR_KEY = { commit: "tr_commit", warn: "tr_warn", good: "tr_good", done: "tr_done",
@@ -1219,7 +1216,7 @@ function applyApiData(data) {
   services = data.services;
   renderToolchips();
   applyFilter();
-  renderOverview(data);          // 概要摘要(状态卡/指标/需要处理/最近活动)
+  renderOverview(data);          // 概要摘要(指标/需要处理/最近活动)
   loadRepos();                    // 仓库面板(客户端 60s 缓存; 面板内按钮强制重算)
 }
 
@@ -1633,14 +1630,6 @@ async function renderOverview(apiData) {
   const nRun = goals.filter(g => g.light === "active" || g.light === "retry").length;
   const nBad = goals.filter(g => g.light === "paused" || g.light === "lost" || g.stalled).length;
   const nAlert = alerts.length;
-  // 总体状态: 图标+文字双通道; 红=有严重(会话丢失) 黄=有告警 绿=全部正常
-  const ok = nAlert === 0;
-  const cls = ok ? "ok" : alerts.some(a => a.sev === "bad") ? "bad" : "warn";
-  const txt = ok ? t("st_all_ok") : t("st_alert", { n: nAlert });
-  const ico = ok ? "ok" : "warn";
-  const sc = $("statuscard"), sl = $("statusline");
-  if (sc) { sc.className = "statuscard " + cls; $("sc-ico").innerHTML = icon(ico, 28); $("sc-text").textContent = txt; }
-  if (sl) { sl.className = "statusline " + cls; const si = $("status-ico"); if (si) si.innerHTML = icon(ico, 16); const st = $("status-text"); if (st) st.textContent = txt; }
 
   const mSvc = $("m-svc"), mRun = $("m-run"), mBad = $("m-bad"), mAlert = $("m-alert");
   if (mSvc) mSvc.textContent = lastSvc.ok + "/" + lastSvc.total;
@@ -1650,7 +1639,6 @@ async function renderOverview(apiData) {
 
   renderAlerts(alerts);
   updateBadge(nAlert);
-  refreshFreshness();
 
   // 渲染首页四大中枢概览卡片
   renderPortalActivity(events);
@@ -1750,25 +1738,8 @@ function updateBadge(n) {
   b.hidden = !n;
   b.textContent = n > 99 ? "99+" : String(n);
 }
-function refreshFreshness() {
-  const age = Date.now() - lastUpdatedTs;
-  const stale = age > 2 * autoSec * 1000;   // 超过 2× 刷新周期 → 数据过期
-  const h = $("stale-badge"), s = $("sc-stale");
-const staleHtml = icon("warn", 12) + " " + t("st_stale");
-  if (h) { h.hidden = !stale; h.innerHTML = staleHtml; }
-  if (s) { s.hidden = !stale; s.innerHTML = staleHtml; }
-  const f = $("sc-fresh");
-  if (f) f.textContent = t("g_last") + ": " + agoStr(age / 1000);
-}
-setInterval(() => { if (!document.hidden) refreshFreshness(); }, 20000);
 
-// 概要页交互: 状态卡 / 四大中枢 Portal 跳转
-$("statuscard")?.addEventListener("click", (e) => {
-  if (e.target.closest(".gcopy") || e.target.closest("a")) return;
-  if (typeof mqMobile !== "undefined" && mqMobile.matches) setPage(4);
-  else setCat("svc");
-});
-
+// 概要页交互: 四大中枢 Portal 跳转
 document.addEventListener("click", (e) => {
   const jump = e.target.closest("[data-nav]");
   if (jump) {
@@ -1936,8 +1907,6 @@ function getRepoTheme(repo) {
   };
 }
 
-let curActivityRepo = "all";
-
 async function renderActivityPage() {
   const ap = $("activity-page");
   if (ap) ap.hidden = false;
@@ -1958,66 +1927,6 @@ async function renderActivityPage() {
   if (!activityEvents.length) {
     container.innerHTML = `<div class="gempty">${escHtml(t("act_empty"))}</div>`;
     return;
-  }
-
-  // 渲染顶部仓库胶囊条 (含未提交修改状态与一键筛选)
-  const reposBar = $("act-repos-bar");
-  if (reposBar) {
-    const repoStats = new Map();
-    const reposList = ((reposCache.data && reposCache.data.repos) || []).filter(r => {
-      if (showStaticPublishCommits || r.name !== "svc-dashboard") return true;
-      return activityEvents.some(e => e.kind === "commit" && e.repo === r.name);
-    });
-    reposList.forEach(r => {
-      repoStats.set(r.name, { name: r.name, commits: r.commits || 0, dirty: r.dirty || 0 });
-    });
-    activityEvents.forEach(e => {
-      if (e.kind === "commit" && e.repo && !repoStats.has(e.repo)) {
-        repoStats.set(e.repo, { name: e.repo, commits: 0, dirty: 0 });
-      }
-    });
-
-    const sortedRepos = [...repoStats.values()].sort((a, b) => {
-      if ((b.dirty > 0) !== (a.dirty > 0)) return (b.dirty > 0) ? 1 : -1;
-      return (b.commits || 0) - (a.commits || 0);
-    });
-
-    let chipsHtml = `<span class="act-repo-chip ${curActivityRepo === 'all' ? 'active' : ''}" data-act-repo="all">
-      <span class="act-repo-dot" style="--rc-col:var(--text-soft)"></span>
-      <span>${t("chip_all")}</span>
-    </span>`;
-
-    chipsHtml += sortedRepos.map(r => {
-      const th = getRepoTheme(r.name);
-      const isAct = curActivityRepo === r.name;
-      const dirtyHtml = r.dirty ? `<span class="act-repo-dirty" title="${escAttr(t("act_dirty_count", { n: r.dirty }))}">${escHtml(t("act_dirty_count", { n: r.dirty }))}</span>` : "";
-      const commitTxt = r.commits ? `<span class="act-repo-cnt">${r.commits}</span>` : "";
-      return `<span class="act-repo-chip ${isAct ? 'active' : ''}" style="--rc-col:${th.color};--rc-bg:${th.bg};--rc-bd:${th.border};" data-act-repo="${escAttr(r.name)}">
-        <span class="act-repo-dot"></span>
-        <span class="act-repo-name">${escHtml(r.name)}</span>
-        ${commitTxt}
-        ${dirtyHtml}
-        <span class="act-repo-traj-btn" data-traj="${escAttr(r.name)}" role="button" tabindex="0" title="${escAttr(t("act_repo_traj"))}">${icon("chart", 11)}</span>
-      </span>`;
-    }).join("");
-
-    reposBar.innerHTML = `<button class="act-repos-nav prev" type="button" aria-label="${escAttr(t("act_repo_prev"))}" hidden>‹</button>`
-      + `<div class="act-repos-scroll">${chipsHtml}</div>`
-      + `<button class="act-repos-nav next" type="button" aria-label="${escAttr(t("act_repo_next"))}" hidden>›</button>`;
-    const repoScroll = reposBar.querySelector(".act-repos-scroll");
-    const updateRepoNav = () => {
-      if (!repoScroll) return;
-      const overflowing = repoScroll.scrollWidth > repoScroll.clientWidth + 2;
-      reposBar.classList.toggle("has-overflow", overflowing);
-      const prev = reposBar.querySelector(".act-repos-nav.prev");
-      const next = reposBar.querySelector(".act-repos-nav.next");
-      if (prev) { prev.hidden = !overflowing || repoScroll.scrollLeft <= 2; }
-      if (next) { next.hidden = !overflowing || repoScroll.scrollLeft + repoScroll.clientWidth >= repoScroll.scrollWidth - 2; }
-    };
-    if (repoScroll) {
-      repoScroll.addEventListener("scroll", updateRepoNav, { passive: true });
-      requestAnimationFrame(updateRepoNav);
-    }
   }
 
   // 计数更新
@@ -2044,7 +1953,7 @@ async function renderActivityPage() {
     autoToggle.textContent = `${t(showStaticPublishCommits ? "act_hide_auto" : "act_show_auto")}${hiddenCount && !showStaticPublishCommits ? ` (${hiddenCount})` : ""}`;
   }
 
-  // 筛选过滤 (类型筛选 + 仓库筛选)
+  // 筛选过滤 (类型筛选)
   const filtered = activityEvents.filter(e => {
     if (curActivityFilter === "commit") { if (e.kind !== "commit") return false; }
     else if (curActivityFilter === "img") { if (e.kind !== "commit" || !(e.files || []).some(f => IMG_EXT_RE.test(f.path))) return false; }
@@ -2052,14 +1961,6 @@ async function renderActivityPage() {
     else if (curActivityFilter === "local") { if (e.kind !== "commit" || e.origin !== "local") return false; }
     else if (curActivityFilter === "done") { if (e.src !== "done" && e.kind !== "complete") return false; }
     else if (curActivityFilter === "watchdog") { if (e.src !== "watchdog" && e.kind !== "watchdog") return false; }
-
-    if (curActivityRepo !== "all") {
-      if (e.kind === "commit") {
-        if (e.repo !== curActivityRepo) return false;
-      } else {
-        if (!((e.name || "") + " " + (e.gid || "")).includes(curActivityRepo)) return false;
-      }
-    }
     return true;
   });
 
@@ -2264,20 +2165,6 @@ async function renderActivityPage() {
 
 // 委托监听活动页 Diff 按钮与筛选过滤
 document.addEventListener("click", async (e) => {
-  const repoNav = e.target.closest("#act-repos-bar .act-repos-nav");
-  if (repoNav) {
-    const scroller = document.querySelector("#act-repos-bar .act-repos-scroll");
-    if (scroller) scroller.scrollBy({ left: (repoNav.classList.contains("prev") ? -1 : 1) * Math.max(220, scroller.clientWidth * .72), behavior: "smooth" });
-    return;
-  }
-  const repoChip = e.target.closest("#act-repos-bar .act-repo-chip");
-  if (repoChip) {
-    if (e.target.closest(".act-repo-traj-btn")) return;
-    const r = repoChip.dataset.actRepo;
-    curActivityRepo = (curActivityRepo === r && r !== "all") ? "all" : r;
-    renderActivityPage();
-    return;
-  }
   const chip = e.target.closest("#act-filters .chip");
   if (chip) {
     if (chip.id === "act-auto-publish-toggle") {
@@ -2334,7 +2221,6 @@ document.addEventListener("click", async (e) => {
 // ==========================================================================
 let tmuxHubCache = { t: 0, data: null };
 let curTmuxFilter = "all";
-let curTmuxSearch = "";
 const tmuxActiveWins = {};  // session -> active window index
 const tmuxShowTerm = {};    // session -> boolean (default true)
 
@@ -2435,6 +2321,7 @@ async function fetchTmuxPaneCapture(target, lines) {
 let tsCache = { t: 0, data: null };
 
 async function fetchTailscaleData(force) {
+  if (BOOT.static) return { ok: false, static: true };
   const now = Date.now();
   if (!force && tsCache.data && now - tsCache.t < 6000) return tsCache.data;
   try {
@@ -2463,7 +2350,10 @@ async function renderNetworkPage(force) {
   const data = await fetchTailscaleData(force);
   if (!data || !data.ok) {
     const list = $("ts-peers-list");
-    if (list) list.innerHTML = `<div class="gempty">${t("a_none")}: ${escHtml(data?.error || "Tailscale not running")}</div>`;
+    const msg = (data && data.static)
+      ? t("static_ts_blocked")
+      : `${t("a_none")}: ${escHtml(data?.error || "Tailscale not running")}`;
+    if (list) list.innerHTML = `<div class="gempty">${msg}</div>`;
     return;
   }
 
@@ -2603,6 +2493,10 @@ document.addEventListener("click", async (e) => {
     const card = $("ts-netcheck-card");
     if (!card) return;
     card.hidden = false;
+    if (BOOT.static) {
+      card.innerHTML = `<div class="gempty">${icon("wait", 14)} ${t("static_ts_blocked")}</div>`;
+      return;
+    }
     card.innerHTML = `<div class="gempty">${icon("wait", 14)} ${t("ts_diag_loading")}</div>`;
     haptic(8);
     try {
@@ -2632,7 +2526,7 @@ document.addEventListener("click", async (e) => {
           </div>
         `;
       } else {
-        card.innerHTML = `<div class="gempty" style="color:var(--c-red);">t("ts_diag_fail", { e: ... })${escHtml(r?.error || "Netcheck error")}</div>`;
+        card.innerHTML = `<div class="gempty" style="color:var(--c-red);">${t("ts_diag_fail", { e: escHtml(r?.error || "Netcheck error") })}</div>`;
       }
     } catch (err) {
       card.innerHTML = `<div class="gempty" style="color:var(--c-red);">${t("ts_diag_fail", { e: escHtml(err.message) })}</div>`;
@@ -2736,33 +2630,22 @@ async function renderTmuxPage() {
   if (nAgent) nAgent.textContent = `(${sessions.filter(s => s.is_agent).length})`;
   if (nAtt) nAtt.textContent = `(${sessions.filter(s => s.attached).length})`;
   if (nDet) nDet.textContent = `(${sessions.filter(s => !s.attached).length})`;
+  const nRes = $("n-tf-resumable"), nSt = $("n-tf-standalone");
+  if (nRes) nRes.textContent = `(${sessions.filter(s => s.goal && s.goal.resume_cmd).length})`;
+  if (nSt) nSt.textContent = `(${sessions.filter(s => !s.is_agent).length})`;
 
   // 3. 过滤 sessions
-  const q = curTmuxSearch.toLowerCase().trim();
   const filtered = sessions.filter(s => {
     if (curTmuxFilter === "agent" && !s.is_agent) return false;
+    if (curTmuxFilter === "resumable" && !(s.goal && s.goal.resume_cmd)) return false;
+    if (curTmuxFilter === "standalone" && s.is_agent) return false;
     if (curTmuxFilter === "attached" && !s.attached) return false;
     if (curTmuxFilter === "detached" && s.attached) return false;
-    if (q) {
-      const matchName = (s.name || "").toLowerCase().includes(q);
-      const matchRepo = (s.repo || "").toLowerCase().includes(q);
-      const matchCmd = (s.main_command || "").toLowerCase().includes(q);
-      const matchCwd = (s.main_cwd || "").toLowerCase().includes(q);
-      const matchWins = (s.windows || []).some(w =>
-        (w.name || "").toLowerCase().includes(q) ||
-        (w.panes || []).some(p =>
-          (p.command || "").toLowerCase().includes(q) ||
-          (p.title || "").toLowerCase().includes(q) ||
-          (p.cwd || "").toLowerCase().includes(q)
-        )
-      );
-      if (!matchName && !matchRepo && !matchCmd && !matchCwd && !matchWins) return false;
-    }
     return true;
   });
 
   if (!filtered.length) {
-    body.innerHTML = `<div class="gempty">${escHtml(q ? t("tmux_no_match") : t("tmux_empty"))}</div>`;
+    body.innerHTML = `<div class="gempty">${escHtml(t("tmux_empty"))}</div>`;
     return;
   }
 
@@ -2907,7 +2790,8 @@ async function openTmuxSheet(sname, target) {
   const sheet = $("tmux-term-sheet");
   if (!sheet) return;
 
-  const data = await fetchTmuxData();
+  // 优先用已有缓存立即开窗(内容本身由 capture 接口拉取), 无缓存才阻塞请求, 避免并发扫描卡顿
+  const data = (tmuxHubCache.data && tmuxHubCache.data.sessions) ? tmuxHubCache.data : await fetchTmuxData();
   const session = (data && data.sessions) ? data.sessions.find(s => s.name === sname) : null;
   const initialTarget = target || (session ? `${session.name}:${session.windows?.[0]?.index || 1}` : sname);
 
@@ -3003,14 +2887,6 @@ function stopTmuxSheetLive() {
   const tp = $("tmux-panel");
   if (!tp) return;
 
-  const searchInput = $("tmux-search");
-  if (searchInput) {
-    searchInput.addEventListener("input", (e) => {
-      curTmuxSearch = e.target.value;
-      renderTmuxPage();
-    });
-  }
-
   const filterWrap = $("tmux-filters");
   if (filterWrap) {
     filterWrap.addEventListener("click", (e) => {
@@ -3056,7 +2932,7 @@ function stopTmuxSheetLive() {
     const killBtn = e.target.closest(".btn-tmux-kill");
     if (killBtn && killBtn.dataset.sname) {
       const sname = killBtn.dataset.sname;
-      uiModal(t("tmux_kill_confirm", { sname })).then(async ok => {
+      uiConfirm(t("tmux_kill_confirm", { sname })).then(async ok => {
         if (!ok) return;
         try {
           const r = await fetch("/api/tmux/kill", {
@@ -3067,6 +2943,7 @@ function stopTmuxSheetLive() {
           const res = await r.json();
           if (res.ok) {
             uiNotice(t("tmux_killed") || "Session terminated");
+            await fetchTmuxData(true);
             renderTmuxPage();
           } else {
             uiNotice(res.msg || "Kill failed");
@@ -3090,7 +2967,7 @@ function stopTmuxSheetLive() {
       sheetKillBtn.addEventListener("click", () => {
         if (!curTmuxSheet.sname) return;
         const sname = curTmuxSheet.sname;
-        uiModal(t("tmux_kill_confirm", { sname })).then(async ok => {
+        uiConfirm(t("tmux_kill_confirm", { sname })).then(async ok => {
           if (!ok) return;
           try {
             const r = await fetch("/api/tmux/kill", {
@@ -3102,6 +2979,7 @@ function stopTmuxSheetLive() {
             if (res.ok) {
               closeTmuxSheet();
               uiNotice(t("tmux_killed") || "Session terminated");
+              await fetchTmuxData(true);
               renderTmuxPage();
             } else {
               uiNotice(res.msg || "Kill failed");
@@ -3323,6 +3201,7 @@ function stopTmuxSheetLive() {
           if (promptInput) promptInput.value = "";
           if (nameInput) nameInput.value = "";
           uiNotice(t("mm_goal_started", { s: res.session }) || `Session ${res.session} started`);
+          await fetchTmuxData(true);   // 强制刷新, 否则 4s 客户端缓存里没有新会话
           await renderTmuxPage();
           if (res.session) {
             openTmuxSheet(res.session, res.target || `${res.session}:0.0`);
@@ -3674,7 +3553,7 @@ const haptic = (ms) => {
 // 移动端把各分区装进 5 个 .pg 页容器; 桌面端恢复原始 DOM 顺序(display:contents 布局)。
 // 记住初始顺序, 窗口跨过 768px 断点时来回重组不丢内容。
 const PAGE_GROUPS = [
-  ["#statuscard", "#sysbar", "#chart-wrap", "#hp-portal-grid"],
+  ["#sysbar", "#chart-wrap", "#hp-portal-grid"],
   ["#activity-page"],
   ["#tmux-panel"],
   ["#agents-page"],
@@ -4087,7 +3966,6 @@ async function loadRuntimes(force) {
   rtT = n;
   return rtCache;
 }
-let curAgentSearch = "";
 
 const rtState = a => !a.installed ? "none" : a.procs > 0 ? "run" : "idle";
 const rtHasQuota = a => !!(a.quota && a.quota.ok && a.quota.buckets && a.quota.buckets.length);
@@ -4396,14 +4274,17 @@ function renderAccountRow(acc, provider, isSec = false) {
             metaHtml += `<span>${roStr ? `${roStr} 积分 将于 ` : ""}${fmtMonthDayTime(w.runsOutAt)} 过期 · ${daysLeft} 天后</span>`;
           }
 
-          const fillCls = (barPct <= 15) ? "low" : (barPct <= 35) ? "warn" : "";
+          // 与 Agent 概览额度条(hp-bucket)统一: 健康=绿, 警戒=橙, 危险=红
+          const fillCls = (curQuotaMode === "remain")
+            ? ((barPct <= 15) ? "low" : (barPct <= 50) ? "warn" : "")
+            : ((barPct >= 85) ? "low" : (barPct >= 50) ? "warn" : "");
           const winNameDisp = (w.name === "5 hours" ? t("mp_win_5h") : w.name === "7 days" ? t("mp_win_7d") : w.name === "Credits" ? t("mp_credits") : w.name);
 
           return `
             <div class="mp-win-col">
               <div class="mp-win-top">
                 <span class="mp-win-name">${escHtml(winNameDisp)}</span>
-                <span class="mp-win-val">${escHtml(valText)}</span>
+                <span class="mp-win-val ${fillCls}">${escHtml(valText)}</span>
               </div>
               <div class="mp-win-track">
                 <div class="mp-win-fill ${fillCls}" style="width:${Math.max(2, Math.min(100, barPct))}%;"></div>
@@ -4522,7 +4403,7 @@ function renderMagpieQuotas(quotas, container) {
       <div class="mp-quota-card" data-provider="${escAttr(p)}">
         <div class="mp-quota-head">
           <div class="mp-quota-provider" style="color:${provCol};">
-            ${icon(provIcon, 15)} <span>${escHtml(pDisplayName)}</span>
+            ${quotaProvIcon(primary.icon, provIcon)} <span>${escHtml(pDisplayName)}</span>
           </div>
           ${hasSec ? `
             <button class="mp-expand-btn" data-target="mp-sec-${escAttr(p)}" type="button">
@@ -4546,8 +4427,9 @@ function renderMagpieQuotas(quotas, container) {
 }
 
 async function loadMagpieUsage(period = "today", force = false) {
-  if (BOOT.static && BOOT.magpieUsage && period === "today" && !force) {
-    return BOOT.magpieUsage;
+  if (BOOT.static && BOOT.magpieUsage) {
+    if (period === "today") return BOOT.magpieUsage;
+    return { ok: false, static: true, calls: 0, cost: 0, agents: [], models: [], series: [] };
   }
   if (!force && magpieUsageCache[period]) {
     return magpieUsageCache[period];
@@ -4755,7 +4637,7 @@ async function refreshMagpieUsage(force = false) {
 }
 
 async function loadMagpieRouting(force = false) {
-  if (BOOT.static && BOOT.magpieRouting && !force) return BOOT.magpieRouting;
+  if (BOOT.static && BOOT.magpieRouting) return BOOT.magpieRouting;
   if (!force && magpieRoutingCache) return magpieRoutingCache;
   try {
     const r = await tlGet("/api/magpie/routing");
@@ -5238,7 +5120,7 @@ function renderMagpieRouting(data) {
       <div>${t("rt_ctx_used")} <b style="font-size:18px;color:var(--fg);display:block;">${(promptTokens/1000).toFixed(1)}K <span style="font-size:11px;font-weight:400;color:var(--muted);">token</span></b><small style="color:var(--muted);">${t("rt_ctx_unknown")}</small></div>
       <div>${t("rt_ctx_cache")} <b style="font-size:18px;color:var(--fg);display:block;">— <span style="font-size:11px;font-weight:400;color:var(--muted);">hit</span></b><small style="color:var(--muted);">${t("rt_ctx_after_resp")}</small></div>
     </div>
-    <div class="ctx-waffle" style="display:grid;grid-template-columns:repeat(40,1fr);gap:2px;background:var(--card-2);padding:10px;border-radius:10px;border:1px solid var(--line);">
+    <div class="ctx-waffle" style="background:var(--card-2);padding:8px;border-radius:8px;border:1px solid var(--line);">
       ${waffleHtml}
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:12px 18px;margin-top:12px;font-size:11px;color:var(--fg-2);">
@@ -5288,10 +5170,10 @@ function renderMagpieRouting(data) {
             <span class="label">${t("rt_stat_requests")}</span>
             <span class="note">${t("rt_reqs_note", { n: routes.length })}</span>
             <span class="grow"></span>
-            <div style="display:flex;gap:4px;font-size:11px;">
-              <span class="rt-tab-btn ${!curRoutingPicked ? 'on' : ''}" id="rt-tab-live" style="padding:2px 8px;border-radius:5px;cursor:pointer;">${t("rt_tab_live")}</span>
-              <span class="rt-tab-btn" style="padding:2px 8px;border-radius:5px;cursor:pointer;">${t("rt_tab_today")} ${Number(totals.requests || routes.length).toLocaleString()}</span>
-              <span class="rt-tab-btn" style="padding:2px 8px;border-radius:5px;cursor:pointer;">${t("rt_tab_by_req")}</span>
+            <div style="display:flex;gap:4px;align-items:center;">
+              <span class="rt-tab-btn ${!curRoutingPicked ? 'on' : ''}" id="rt-tab-live">${t("rt_tab_live")}</span>
+              <span class="rt-tab-btn">${t("rt_tab_today")} ${Number(totals.requests || routes.length).toLocaleString()}</span>
+              <span class="rt-tab-btn">${t("rt_tab_by_req")}</span>
             </div>
           </div>
           <div class="list rt-reqs" id="rt-reqs-list"></div>
@@ -5436,9 +5318,7 @@ async function refreshMagpieRouting(force = false) {
 }
 
 async function loadMagpieProviders(force = false) {
-  if (BOOT.static && BOOT.magpieProviders && !force) {
-    return BOOT.magpieProviders;
-  }
+  if (BOOT.static && BOOT.magpieProviders) return BOOT.magpieProviders;
   if (!force && magpieProvidersCache) {
     return magpieProvidersCache;
   }
@@ -5453,8 +5333,6 @@ async function loadMagpieProviders(force = false) {
   }
   return magpieProvidersCache || { ok: false, providers: [], presets: {} };
 }
-
-let curProviderFilter = "";
 
 const ICON_ALIASES = {
   "codex": "codex-color",
@@ -5485,23 +5363,57 @@ const ICON_ALIASES = {
   "cherryin": "cherryin-color"
 };
 
+// 图标文件是否真实存在(BOOT.iconFiles 由服务端列出 static/icons/); 清单缺失时保留旧行为
+function iconFileExists(iconName) {
+  const files = (window.__BOOT__ && window.__BOOT__.iconFiles) || [];
+  if (!files.length) return true;
+  let name = String(iconName || "").trim();
+  if (name.startsWith("file:")) name = name.slice(5);
+  let ext = "";
+  const m = name.match(/\.([a-z0-9]+)$/i);
+  if (m) { ext = m[1].toLowerCase(); name = name.slice(0, -m[0].length); }
+  if (ICON_ALIASES[name]) { name = ICON_ALIASES[name]; ext = "svg"; }
+  return files.includes(name + (ext ? "." + ext : ".svg"));
+}
+
+// 配额卡头部图标: 优先 provider 图标文件, 本地字符 glyph (spark/cpu…) 或文件缺失时回退字符图
+function providerFileUrl(iconName) {
+  let name = String(iconName || "").trim();
+  let ext = "";
+  if (name.startsWith("file:")) name = name.slice(5);
+  const m = name.match(/\.([a-z0-9]+)$/i);
+  if (m) { ext = m[1].toLowerCase(); name = name.slice(0, -m[0].length); }
+  if (ICON_ALIASES[name]) name = ICON_ALIASES[name];
+  return "/static/icons/" + name + (ext ? "." + ext : ".svg");
+}
+
+function quotaProvIcon(iconName, glyphName) {
+  if (!iconName || ICONS[iconName] || !iconFileExists(iconName)) return icon(iconName || glyphName, 15);
+  const glyph = icon(glyphName, 15).replace(/"/g, "&quot;");
+  return `<span class="qpi"><img src="${escAttr(providerFileUrl(iconName))}" alt="" onerror="this.onerror=null;this.parentElement.innerHTML='${glyph}';"></span>`;
+}
+
+const PROV_GENERIC_SPAN = `<span class="mp-icon-generic"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M8 2.2 13.2 5.1v5.8L8 13.8 2.8 10.9V5.1Z"></path><path d="M8 8v5.8"></path><path d="M2.8 5.1 8 8l5.2-2.9"></path></svg></span>`;
+
 function renderProviderIcon(iconName, fallbackChar = "") {
-  if (!iconName || iconName === "generic") {
-    return `<span class="mp-icon-generic"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M8 2.2 13.2 5.1v5.8L8 13.8 2.8 10.9V5.1Z"></path><path d="M8 8v5.8"></path><path d="M2.8 5.1 8 8l5.2-2.9"></path></svg></span>`;
+  if (!iconName || iconName === "generic" || !iconFileExists(iconName)) {
+    return PROV_GENERIC_SPAN;
   }
   let name = String(iconName).toLowerCase().trim();
   if (name.startsWith("file:")) {
     name = name.slice(5);
   }
-  if (name.endsWith(".svg") || name.endsWith(".png")) {
-    name = name.replace(/\.(svg|png)$/, "");
-  }
+  let ext = "";
+  const em = name.match(/\.(svg|png|webp)$/);
+  if (em) { ext = em[1].toLowerCase(); name = name.slice(0, -em[0].length); }
   if (ICON_ALIASES[name]) {
     name = ICON_ALIASES[name];
+    ext = "svg";
   }
-  const path = "/static/icons/" + name + ".svg";
-  const fallbackSvg = `<span class=\\'mp-icon-generic\\'><svg viewBox=\\'0 0 16 16\\' width=\\'16\\' height=\\'16\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'1.3\\' stroke-linejoin=\\'round\\'><path d=\\'M8 2.2 13.2 5.1v5.8L8 13.8 2.8 10.9V5.1Z\\'></path><path d=\\'M8 8v5.8\\'></path><path d=\\'M2.8 5.1 8 8l5.2-2.9\\'></path></svg></span>`;
-  return `<img src="${escAttr(path)}" alt="" onerror="this.onerror=null;this.parentElement.innerHTML='${fallbackSvg}';" />`;
+  const path = "/static/icons/" + name + (ext ? "." + ext : ".svg");
+  // onerror 属性用双引号包裹, 内部 HTML 的双引号必须转义为 &quot;
+  const fallbackAttr = PROV_GENERIC_SPAN.replace(/"/g, "&quot;");
+  return `<img src="${escAttr(path)}" alt="" onerror="this.onerror=null;this.outerHTML='${fallbackAttr}';" />`;
 }
 
 function renderMagpieProviders(data) {
@@ -5512,30 +5424,14 @@ function renderMagpieProviders(data) {
   const listEl = $("mp-providers-list");
   if (!listEl) return;
 
-  const searchInput = $("mp-pv-search");
-  if (searchInput && !searchInput.dataset.bound) {
-    searchInput.dataset.bound = "1";
-    searchInput.addEventListener("input", (e) => {
-      curProviderFilter = (e.target.value || "").trim().toLowerCase();
-      renderMagpieProviders(curMagpieProvidersData);
-    });
-  }
-
   const provs = data.providers || [];
-  const q = curProviderFilter;
-  const filtered = q ? provs.filter(p => {
-    const name = (p.name || p.id || "").toLowerCase();
-    const user = (p.account?.user || "").toLowerCase();
-    const host = (p.host || "").toLowerCase();
-    return name.includes(q) || user.includes(q) || host.includes(q);
-  }) : provs;
 
-  if (!filtered.length) {
+  if (!provs.length) {
     listEl.innerHTML = `<div class="gempty" style="padding:32px 16px;">${escHtml(t("mp_empty"))}</div>`;
     return;
   }
 
-  listEl.innerHTML = filtered.map(pv => {
+  listEl.innerHTML = provs.map(pv => {
     const isOff = !!pv.off;
     const acc = pv.account || {};
     const user = acc.user || "";
@@ -5776,15 +5672,6 @@ function bindAgentSubnav() {
 function bindAgentHubEvents(el, d) {
   bindAgentSubnav();
 
-  const searchInput = $("agent-search");
-  if (searchInput && !searchInput.dataset.bound) {
-    searchInput.dataset.bound = "1";
-    searchInput.addEventListener("input", (e) => {
-      curAgentSearch = e.target.value;
-      renderRuntimes(d);
-    });
-  }
-
   const btnQuota = $("btn-refresh-quota");
   if (btnQuota && !btnQuota.dataset.bound) {
     btnQuota.dataset.bound = "1";
@@ -5792,21 +5679,6 @@ function bindAgentHubEvents(el, d) {
       btnQuota.classList.add("loading");
       await tlPost("/api/runtimes", { agent: "", action: "quota" });
       setTimeout(refreshAgentsPage, 1000);
-    });
-  }
-
-  const btnProbeAll = $("btn-probe-all");
-  if (btnProbeAll && !btnProbeAll.dataset.bound) {
-    btnProbeAll.dataset.bound = "1";
-    btnProbeAll.addEventListener("click", async () => {
-      const testBtns = el.querySelectorAll("[data-mtest]");
-      if (!testBtns.length) return;
-      btnProbeAll.classList.add("loading");
-      for (const b of testBtns) {
-        b.click();
-        await new Promise(r => setTimeout(r, 120));
-      }
-      setTimeout(() => btnProbeAll.classList.remove("loading"), 1000);
     });
   }
 
@@ -5930,20 +5802,8 @@ function renderRuntimes(d) {
   if (nQuota) nQuota.textContent = `(${allAgents.filter(a => a.installed && rtHasQuota(a)).length})`;
   if (nNone) nNone.textContent = `(${none.length})`;
 
-  // 5. 过滤与搜索
-  const q = curAgentSearch.toLowerCase().trim();
-  const filtered = allAgents.filter(a => {
-    if (!rtMatch(a, rtFilter)) return false;
-    if (q) {
-      const matchName = (a.name || "").toLowerCase().includes(q);
-      const matchBin = (a.bin || "").toLowerCase().includes(q);
-      const matchAcc = (a.quota && a.quota.account ? a.quota.account.toLowerCase() : "").includes(q);
-      const matchProcs = (a.proc_list || []).some(p => (p.cwd || "").toLowerCase().includes(q) || (p.cmd || "").toLowerCase().includes(q) || String(p.pid).includes(q));
-      const matchTasks = (a.tasks || []).some(t => (t.cwd || "").toLowerCase().includes(q) || (t.goal || t.title || "").toLowerCase().includes(q));
-      if (!matchName && !matchBin && !matchAcc && !matchProcs && !matchTasks) return false;
-    }
-    return true;
-  });
+  // 5. 过滤
+  const filtered = allAgents.filter(a => rtMatch(a, rtFilter));
 
   // 6. 渲染卡片
   const cardsContainer = $("agent-cards-container");
@@ -7012,7 +6872,7 @@ function renderHealth(h) {
       `${x.up ? "●" : "○"} :${x.port} ${escHtml(x.name)}`).join("\n")}</div>` : "");
 }
 
-// --- 连接信息(状态卡 sc-sub 行内的 IP 复制 chip): ssh/LAN 点击复制, 数据来自 TL_CONF(不写死) ---
+// --- 连接信息(IP 复制 chip): ssh/LAN 点击复制, 数据来自 TL_CONF(不写死) ---
 function renderConnbar() {
   const grid = $("conn-grid");
   if (!grid) return;
@@ -7038,9 +6898,7 @@ function renderConnbar() {
 function syncConnbarVisibility() {
   const grid = $("conn-grid");
   const home = isMobile() ? page === 0 : curCat === "home";
-  // 状态卡和 SSH/IP 提示都只属于首页；只读快照的“在线版”入口不受影响。
-  const status = $("statuscard");
-  if (status) status.hidden = !home;
+  // SSH/IP 提示只属于首页；只读快照的“在线版”入口不受影响。
   if (grid) grid.querySelectorAll(".h-live-conn").forEach(el => { el.hidden = !home; });
 }
 
@@ -7274,7 +7132,7 @@ const CATS = [
   ["agent", "tab_agent"], ["svc", "tab_svc"],
 ];
 const CAT_SELS = {
-  home: ["#statuscard", "#sysbar", "#chart-wrap", "#hp-portal-grid", "#toolchips"],
+  home: ["#sysbar", "#chart-wrap", "#hp-portal-grid", "#toolchips"],
   activity: ["#activity-page"],
   tmux: ["#tmux-panel"],
   goal: ["#tmux-panel"],
@@ -7372,6 +7230,58 @@ window.addEventListener("hashchange", () => {   // 手改 hash/后退也跟随
     window.addEventListener("resize", () => upd(el));
   });
 })();
+
+// --- 静态快照: 所有脱敏占位符打马赛克(只读, 不可取消) ---
+// BOOT.redactRe 由服务端按语言生成(privacy.redact_marker_re), 覆盖全部占位文案
+let _redactRe = null;
+if (BOOT.static && BOOT.redactRe) {
+  try { _redactRe = new RegExp(BOOT.redactRe, "g"); } catch (e) { _redactRe = null; }
+}
+function applyStaticRedaction(root) {
+  if (!_redactRe || !root) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(n) {
+      const p = n.parentNode;
+      if (p && p.nodeType === 1 && p.classList.contains("redact-mosaic")) return NodeFilter.FILTER_REJECT;
+      _redactRe.lastIndex = 0;
+      return (n.nodeValue && _redactRe.test(n.nodeValue)) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    }
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  nodes.forEach(n => {
+    const text = n.nodeValue;
+    _redactRe.lastIndex = 0;
+    let m;
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    while ((m = _redactRe.exec(text)) !== null) {
+      if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+      const span = document.createElement("span");
+      span.className = "redact-mosaic";
+      span.textContent = m[0];
+      span.title = m[0];
+      frag.appendChild(span);
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+    n.parentNode.replaceChild(frag, n);
+  });
+}
+let _redactTimer = null;
+function schedStaticRedaction() {
+  clearTimeout(_redactTimer);
+  _redactTimer = setTimeout(() => applyStaticRedaction(document.body), 150);
+}
+if (BOOT.static && _redactRe) {
+  // 静态页移除「隐藏账号」切换: 路由图账号默认打码且不可取消
+  const _maskBtn = $("rtMask");
+  if (_maskBtn) _maskBtn.remove();
+  schedStaticRedaction();
+  new MutationObserver(schedStaticRedaction).observe(document.body, {
+    childList: true, subtree: true, characterData: true
+  });
+}
 
 // --- 启动 ---
 regroupPages();          // 手机: 分组进 6 页; 桌面: 保持原序
