@@ -7240,12 +7240,28 @@ if (BOOT.static && BOOT.redactRe) {
   try { _redactRe = new RegExp(BOOT.redactRe, "g"); } catch (e) { _redactRe = null; }
 }
 if (!_redactRe) _redactRe = new RegExp(FALLBACK_REDACT_RE, "g");
+// Tmux 页豁免前端马赛克: 该页数据层已整体脱敏(会话匿名/预览屏蔽/字段占位),
+// 占位文本保持可读以便分辨会话与窗口; 其余页面照常打码
+const REDACT_EXEMPT_SELS = ["#tmux-panel"];
+function redactExemptEl() {
+  for (const sel of REDACT_EXEMPT_SELS) {
+    const el = document.querySelector(sel);
+    if (el) return el;
+  }
+  return null;
+}
 function applyStaticRedaction(root) {
   if (!_redactRe || !root) return;
+  const exempt = redactExemptEl();
+  if (exempt) {
+    // 还原 Tmux 页上已套的马赛克 span, 让占位文本可见
+    exempt.querySelectorAll(".redact-mosaic").forEach(sp => sp.replaceWith(document.createTextNode(sp.textContent || "")));
+  }
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(n) {
       const p = n.parentNode;
       if (p && p.nodeType === 1 && p.classList.contains("redact-mosaic")) return NodeFilter.FILTER_REJECT;
+      if (exempt && exempt.contains(n)) return NodeFilter.FILTER_REJECT;
       _redactRe.lastIndex = 0;
       return (n.nodeValue && _redactRe.test(n.nodeValue)) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
     }
