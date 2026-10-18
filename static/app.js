@@ -496,8 +496,15 @@ function renderToolchips() {
   const ports = new Set(services.filter(s => !s.paused).map(s => s.port));   // 暂停服务不显示
   let chips = TOOL_LINKS.filter(([n, p]) => ports.has(p)).map(([n, p]) =>
     `<a class='chip tchip' href='http://${linkHost(location.hostname)}:${p}/' target='_blank' rel='noopener'>${n} :${p} ${icon("ext", 11)}</a>`).join("");
-  if (!BOOT.static && ports.has(3426)) {
-    chips = `<a class='chip tchip magpie-chip' style='color:#c084fc;border-color:rgba(168,85,247,0.35);background:rgba(168,85,247,0.08);' href='${escAttr(getMagpieUrl())}' target='_blank' rel='noopener'>Magpie ${icon("ext", 11)}</a>` + chips;
+  if (!BOOT.static) {
+    const remote = "https://debian.tailb4776a.ts.net";
+    const vnc = [];
+    if (ports.has(6080)) vnc.push(`<a class='chip tchip' href='${remote}/xfce/vnc.html?autoconnect=1&resize=scale' target='_blank' rel='noopener'>XFCE VNC ${icon("ext", 11)}</a>`);
+    if (ports.has(6082)) vnc.push(`<a class='chip tchip' href='${remote}:8449/vnc.html?autoconnect=1&resize=scale' target='_blank' rel='noopener'>Hyprland VNC ${icon("ext", 11)}</a>`);
+    if (ports.has(3426)) {
+      vnc.unshift(`<a class='chip tchip magpie-chip' style='color:#c084fc;border-color:rgba(168,85,247,0.35);background:rgba(168,85,247,0.08);' href='${escAttr(getMagpieUrl())}' target='_blank' rel='noopener'>Magpie ${icon("ext", 11)}</a>`);
+    }
+    chips = vnc.join("") + chips;
   }
   el.innerHTML = chips;
   el.hidden = !chips;
@@ -1231,6 +1238,7 @@ async function load(alsoSys) {
       if (BOOT.static) {
         if (BOOT.apiData) applyApiData(BOOT.apiData);
         if (alsoSys && BOOT.sysData) renderSys(BOOT.sysData);
+        if (BOOT.vmsData) renderVms(BOOT.vmsData);
         return;
       }
       ompCache = null; tasksCache = null; tmuxCache = null; // 手动刷新清面板缓存,拿到最新 agent/tmux/任务状态
@@ -1257,6 +1265,7 @@ async function load(alsoSys) {
         } catch (err) {
           console.error("sys refresh failed", err);
         }
+        loadVms(true);
       }
     } finally {
       btns.forEach(b => { b.classList.remove("spinning"); b.setAttribute("aria-disabled", "false"); });
@@ -1618,6 +1627,174 @@ async function renderPortalAgent() {
 
 
 
+// --- PVE 虚拟机状态面板 (Windows11 / DEBIAN) ---
+let vmsCache = { t: 0, data: null };
+async function loadVms(force) {
+  if (BOOT.static && BOOT.vmsData) {
+    vmsCache.data = BOOT.vmsData;
+    vmsCache.t = Date.now();
+    renderVms(BOOT.vmsData);
+    return BOOT.vmsData;
+  }
+  const now = Date.now();
+  if (!force && vmsCache.data && now - vmsCache.t < 15000) {
+    renderVms(vmsCache.data);
+    return vmsCache.data;
+  }
+  const snap = snapGet("vms");
+  if (!force && snap && snap.data && !vmsCache.data) {
+    vmsCache = { t: now, data: snap.data };
+    renderVms(snap.data);
+  }
+  try {
+    const r = await fetch("/api/vms", { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const d = await r.json();
+    vmsCache = { t: Date.now(), data: d };
+    snapSet("vms", { data: d });
+    renderVms(d);
+    return d;
+  } catch (err) {
+    if (!snap) console.error("vms load failed", err);
+    return vmsCache.data;
+  }
+}
+
+function renderVms(d) {
+  const el = $("hp-vms-grid");
+  if (!el) return;
+  const list = (d && d.vms) || [];
+  if (!list.length) {
+    if (d && d.error) {
+      el.innerHTML = `<div class="gempty" style="grid-column:1/-1;">${escHtml(d.error)}</div>`;
+    }
+    return;
+  }
+
+  const fmtGib = (b) => {
+    if (!b || b <= 0) return "0 B";
+    const gib = b / 1073741824;
+    if (gib >= 1) return gib.toFixed(2) + " GiB";
+    const mib = b / 1048576;
+    if (mib >= 1) return mib.toFixed(2) + " MiB";
+    return b + " B";
+  };
+
+  const fmtUptimeLang = (sec) => {
+    if (!sec || sec <= 0) return "";
+    const days = Math.floor(sec / 86400);
+    const rem = sec % 86400;
+    const hours = String(Math.floor(rem / 3600)).padStart(2, "0");
+    const mins = String(Math.floor((rem % 3600) / 60)).padStart(2, "0");
+    const secs = String(rem % 60).padStart(2, "0");
+    if (days > 0) {
+      return t("vm_uptime_days", { d: days, h: hours, m: mins, s: secs });
+    }
+    return `${hours}:${mins}:${secs}`;
+  };
+
+  el.innerHTML = list.map(v => {
+    const isRun = v.status === "running";
+    const upStr = isRun && v.uptime ? `(${t("vm_uptime_prefix")}: ${fmtUptimeLang(v.uptime)})` : "";
+    const cpuPct = Number(v.cpu_usage || 0).toFixed(2);
+    const memPct = Number(v.mem_percent || 0).toFixed(2);
+    const cpuStr = `${cpuPct}% of ${v.cpus || 1} CPUs`;
+    const memStr = t("vm_mem_of", { pct: memPct, total: fmtGib(v.mem_total), used: fmtGib(v.mem_used) });
+    const memHostStr = fmtGib(v.mem_host);
+    const diskStr = fmtGib(v.boot_disk);
+    const haStr = (!v.ha || v.ha === "none") ? t("vm_ha_none") : (v.ha || t("vm_ha_none"));
+
+    // CPU bar & Mem bar
+    const memFillCls = v.mem_percent > 90 ? " bad" : v.mem_percent >= 75 ? " warn" : "";
+
+    // IPs
+    let ipsHtml = "";
+    if (v.ips && v.ips.length) {
+      ipsHtml = `<div class="hp-vm-ips-wrap">` + v.ips.map(ip => {
+        return `<span class="hp-vm-ip-tag" title="${escAttr(ip)}">${escHtml(ip)}</span>`;
+      }).join("") + `</div>`;
+    } else {
+      ipsHtml = `<span class="hp-vm-v" style="color:var(--text-muted);font-weight:400;">${escHtml(t("vm_no_agent"))}</span>`;
+    }
+
+    const pveLink = linkHost(v.pve_url || "https://192.168.3.10:8006");
+
+    return `<div class="gpanel hp-vm-card" id="hp-vm-${escAttr(v.vmid)}">
+      <div class="hp-vm-head">
+        <div class="hp-vm-title-wrap">
+          <span class="hp-vm-ico ${isRun ? "running" : "stopped"}">${icon("server", 15)}</span>
+          <span class="hp-vm-name">${escHtml(v.name)}</span>
+          ${upStr ? `<span class="hp-vm-uptime">${escHtml(upStr)}</span>` : ""}
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="hp-vm-status-badge ${isRun ? "running" : "stopped"}">
+            ${icon("dot", 8)} ${isRun ? "running" : "stopped"}
+          </span>
+          <a class="hp-vm-link" href="${escAttr(pveLink)}" target="_blank" rel="noopener" title="${escAttr(t("vm_pve_console"))}">
+            ${icon("ext", 12)}
+          </a>
+        </div>
+      </div>
+      <div class="hp-vm-rows">
+        <div class="hp-vm-row">
+          <div class="hp-vm-row-kv">
+            <span class="hp-vm-k">${icon("doc", 13)} ${escHtml(t("vm_status"))}</span>
+            <span class="hp-vm-v">${isRun ? "running" : "stopped"}</span>
+          </div>
+        </div>
+        <div class="hp-vm-row">
+          <div class="hp-vm-row-kv">
+            <span class="hp-vm-k">${icon("heart", 13)} ${escHtml(t("vm_ha"))}</span>
+            <span class="hp-vm-v">${escHtml(haStr)}</span>
+          </div>
+        </div>
+        <div class="hp-vm-row">
+          <div class="hp-vm-row-kv">
+            <span class="hp-vm-k">${icon("box", 13)} ${escHtml(t("vm_node"))}</span>
+            <span class="hp-vm-v">${escHtml(v.node || "pve")}</span>
+          </div>
+        </div>
+        <div class="hp-vm-row">
+          <div class="hp-vm-row-kv">
+            <span class="hp-vm-k">${icon("cpu", 13)} ${escHtml(t("vm_cpu"))}</span>
+            <span class="hp-vm-v">${escHtml(cpuStr)}</span>
+          </div>
+          <div class="hp-vm-bar-track">
+            <div class="hp-vm-bar-fill cpu" style="width:${Math.min(Math.max(v.cpu_usage || 0, isRun ? 1 : 0), 100)}%;"></div>
+          </div>
+        </div>
+        <div class="hp-vm-row">
+          <div class="hp-vm-row-kv">
+            <span class="hp-vm-k">${icon("mem", 13)} ${escHtml(t("vm_mem"))}</span>
+            <span class="hp-vm-v">${escHtml(memStr)}</span>
+          </div>
+          <div class="hp-vm-bar-track">
+            <div class="hp-vm-bar-fill mem${memFillCls}" style="width:${Math.min(Math.max(v.mem_percent || 0, isRun ? 1 : 0), 100)}%;"></div>
+          </div>
+        </div>
+        <div class="hp-vm-row">
+          <div class="hp-vm-row-kv">
+            <span class="hp-vm-k">${icon("mem", 13)} ${escHtml(t("vm_host_mem"))}</span>
+            <span class="hp-vm-v">${escHtml(memHostStr)}</span>
+          </div>
+        </div>
+        <div class="hp-vm-row">
+          <div class="hp-vm-row-kv">
+            <span class="hp-vm-k">${icon("disk", 13)} ${escHtml(t("vm_boot_disk"))}</span>
+            <span class="hp-vm-v">${escHtml(diskStr)}</span>
+          </div>
+        </div>
+        <div class="hp-vm-row">
+          <div class="hp-vm-row-kv" style="align-items:flex-start;">
+            <span class="hp-vm-k" style="margin-top:2px;">${icon("network", 13)} ${escHtml(t("vm_ips"))}</span>
+            ${ipsHtml}
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }).join("");
+}
+
 let lastSvc = { ok: 0, total: 0 };
 async function renderOverview(apiData) {
   if (apiData && apiData.services) {
@@ -1640,7 +1817,8 @@ async function renderOverview(apiData) {
   renderAlerts(alerts);
   updateBadge(nAlert);
 
-  // 渲染首页四大中枢概览卡片
+  // 渲染首页四大中枢概览卡片与 PVE 虚拟机
+  loadVms();
   renderPortalActivity(events);
   renderPortalSvc(apiData && apiData.services);
   await Promise.allSettled([renderPortalTmux(), renderPortalAgent()]);
@@ -3553,7 +3731,7 @@ const haptic = (ms) => {
 // 移动端把各分区装进 5 个 .pg 页容器; 桌面端恢复原始 DOM 顺序(display:contents 布局)。
 // 记住初始顺序, 窗口跨过 768px 断点时来回重组不丢内容。
 const PAGE_GROUPS = [
-  ["#sysbar", "#chart-wrap", "#hp-portal-grid"],
+  ["#sysbar", "#chart-wrap", "#hp-vms-grid", "#hp-portal-grid"],
   ["#activity-page"],
   ["#tmux-panel"],
   ["#agents-page"],
@@ -4652,7 +4830,176 @@ let routingResizeObs = null;
 let routingReqTab = "all";
 let routingBySession = false;
 let routingMaskAccounts = false;
+let curRoutingAccountFilter = null;
+let curRoutingGroupFilter = null;
 let ctxActiveTab = "all";
+let ctxShowAll = false;
+let curRoutingGroupEdit = null;
+
+const ROUTE_OPTS = [["", "Smart"], ["order", "In order"], ["rotate", "In turn"], ["usage", "Least used"]];
+const AFF_OPTS = [["", "Auto"], ["session", "Session"], ["turn", "Within a turn"], ["off", "Off"]];
+const AFF_HINT = {
+  "": "A conversation stays with the account or key that answered it while what the vendor cached of it is worth keeping — within a turn always, across turns while it's fresh.",
+  session: "A conversation stays with the account or key that answered it for the whole session, while it can answer.",
+  turn: "A conversation stays put within a turn, while the agent sends tool results back; when you speak again, routing decides afresh.",
+  off: "Every request is routed afresh, whoever answered its conversation before.",
+};
+const GROUP_HINT = {
+  "": "Smart, over every member's accounts and keys together: of the subscriptions with quota to spare, the one whose allowance renews soonest goes first; one resting after a failure goes last.",
+  order: "In order: the first model until it can't answer, then the next — each over its own accounts or keys as its provider routes them.",
+  rotate: "In turn: each conversation's next turn goes to the next member's account or key, spreading the load.",
+  usage: "Least used first: the account or key with the most of its allowance left goes first.",
+};
+const EFFORT_OPTS = ["low", "medium", "high", "xhigh", "max"];
+
+function splitMemberId(id) {
+  id = id || "";
+  if (id.startsWith("group/")) return [id, ""];
+  const m = /^(.+):(none|minimal|low|medium|high|xhigh|max)$/i.exec(id);
+  return m ? [m[1], m[2].toLowerCase()] : [id, ""];
+}
+
+function ruleSummaryText(r) {
+  const bits = [];
+  if (r.tokens) bits.push(`≥ ${Number(r.tokens).toLocaleString()} tokens`);
+  if (r.images) bits.push("has an image");
+  if (r.effort) bits.push(r.effort === "on" ? "reasoning on" : `reasoning ≥ ${r.effort}`);
+  if (r.agents && r.agents.length) bits.push(r.agents.join(" / "));
+  if (r.intent) bits.push(`asks for “${r.intent}”`);
+  return bits.join(" · ") || "default rule";
+}
+
+function getRoutingModesMap() {
+  return {
+    "": [t("rt_mode_smart"), t("rt_mode_smart_desc")],
+    order: [t("rt_mode_order"), t("rt_mode_order_desc")],
+    rotate: [t("rt_mode_rotate"), t("rt_mode_rotate_desc")],
+    usage: [t("rt_mode_usage"), t("rt_mode_usage_desc")]
+  };
+}
+
+function showRoutingToolsModal(r) {
+  if (!r) return;
+  const parts = r.prompt?.parts || [];
+  const toolsPart = parts.find(p => p.kind === "tools");
+  const resultsPart = parts.find(p => p.kind === "results");
+  const declaredTools = toolsPart?.items || [];
+  const toolResults = resultsPart?.items || [];
+
+  const overlay = document.createElement("div");
+  overlay.className = "rt-modal-overlay";
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+  let toolsListHtml = "";
+  if (declaredTools.length) {
+    toolsListHtml = declaredTools.map(item => `
+      <div class="rt-tool-item">
+        <span class="ic">${renderProviderIcon("tools", "T")}</span>
+        <span class="t-name">${escHtml(item.name || "tool")}</span>
+        <span class="t-tokens">${fmtTokens(item.tokens || 0)} tokens</span>
+      </div>
+    `).join("");
+  } else {
+    toolsListHtml = `<div class="gempty" style="padding:16px;">${t("rt_tools_none")}</div>`;
+  }
+
+  let resultsListHtml = "";
+  if (toolResults.length) {
+    resultsListHtml = toolResults.map(item => `
+      <div class="rt-tool-item">
+        <span class="ic">${renderProviderIcon("tools", "T")}</span>
+        <span class="t-name">${escHtml(item.name || "tool")}</span>
+        <span style="font-size:11px;color:var(--accent);margin-left:auto;">${item.n ? t("rt_tools_calls_count", { n: item.n }) : ""}</span>
+        <span class="t-tokens">${fmtTokens(item.tokens || 0)} tokens</span>
+      </div>
+    `).join("");
+  }
+
+  overlay.innerHTML = `
+    <div class="rt-modal-card">
+      <div class="rt-modal-head">
+        <div>
+          <b>${t("rt_tools_title")}</b>
+          <span style="font-size:11px;color:var(--muted);margin-left:8px;">#${escHtml(String(r.seq || r.id || ""))} · ${escHtml(r.agent || "agent")}</span>
+        </div>
+        <button type="button" class="rt-modal-close-btn" aria-label="${t("rt_modal_close")}">✕</button>
+      </div>
+      <div class="rt-modal-body">
+        <div style="font-size:12px;color:var(--text-soft);">${t("rt_tools_desc")}</div>
+        <div>
+          <b style="font-size:12px;display:block;margin-bottom:6px;">${t("rt_tools_declared")} (${declaredTools.length})</b>
+          <div style="display:grid;gap:6px;">${toolsListHtml}</div>
+        </div>
+        ${toolResults.length ? `
+          <div style="margin-top:8px;">
+            <b style="font-size:12px;display:block;margin-bottom:6px;">${t("rt_tools_results")} (${toolResults.length})</b>
+            <div style="display:grid;gap:6px;">${resultsListHtml}</div>
+          </div>
+        ` : ""}
+      </div>
+    </div>
+  `;
+  overlay.querySelector(".rt-modal-close-btn").onclick = () => overlay.remove();
+  document.body.appendChild(overlay);
+}
+
+function showRoutingPolicyModal(curMode) {
+  const overlay = document.createElement("div");
+  overlay.className = "rt-modal-overlay";
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+  const policies = [
+    { id: "", key: "smart", title: t("rt_mode_smart"), desc: t("rt_mode_smart_desc") },
+    { id: "order", key: "order", title: t("rt_mode_order"), desc: t("rt_mode_order_desc") },
+    { id: "rotate", key: "rotate", title: t("rt_mode_rotate"), desc: t("rt_mode_rotate_desc") },
+    { id: "usage", key: "usage", title: t("rt_mode_usage"), desc: t("rt_mode_usage_desc") }
+  ];
+
+  overlay.innerHTML = `
+    <div class="rt-modal-card">
+      <div class="rt-modal-head">
+        <b>${t("rt_policy_title")}</b>
+        <button type="button" class="rt-modal-close-btn" aria-label="${t("rt_modal_close")}">✕</button>
+      </div>
+      <div class="rt-modal-body">
+        <div class="rt-policy-grid">
+          ${policies.map(p => {
+            const isActive = (p.id === curMode || (!curMode && p.key === "smart"));
+            return `
+              <div class="rt-policy-item ${isActive ? "active" : ""}">
+                <b>${isActive ? "✓ " : ""}${escHtml(p.title)}</b>
+                <p>${escHtml(p.desc)}</p>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      </div>
+    </div>
+  `;
+  overlay.querySelector(".rt-modal-close-btn").onclick = () => overlay.remove();
+  document.body.appendChild(overlay);
+}
+
+function setGlobalAccountsMask(masked) {
+  routingMaskAccounts = masked;
+  curAccountMasked = masked;
+  document.body.classList.toggle("masking", masked);
+  const rtMask = $("rtMask");
+  if (rtMask) {
+    rtMask.setAttribute("aria-pressed", String(masked));
+    const sp = rtMask.querySelector("span");
+    if (sp) sp.textContent = masked ? t("mp_show_accounts") : t("mp_hide_accounts");
+  }
+  const btnMask = $("mp-btn-mask");
+  if (btnMask) {
+    btnMask.classList.toggle("active", masked);
+    const lbl = $("mp-mask-label");
+    if (lbl) lbl.textContent = masked ? t("mp_show_accounts") : t("mp_mask_toggle");
+  }
+  document.querySelectorAll(".mp-acc-email").forEach(el => {
+    el.classList.toggle("is-masked", masked);
+  });
+}
 
 const RTHUES = {
   claude: "#d97757", codex: "#6366f1", gemini: "#0ea5e9", copilot: "#a855f7",
@@ -4751,41 +5098,467 @@ function layoutRoutingWires() {
     return `M${h.cx} ${h.b} L${h.cx} ${y} C${h.cx} ${y + 22} ${x} ${y + 2} ${x} ${y + 24} L${x} ${a.cy - 10} Q${x} ${a.cy} ${a.l} ${a.cy}`;
   };
 
-  const fromSub = (sBox, a) => {
-    const x = sBox.l + 9;
-    return `M${sBox.l} ${sBox.cy} Q${x} ${sBox.cy} ${x} ${sBox.cy + 9} L${x} ${a.cy - 9} Q${x} ${a.cy} ${a.l} ${a.cy}`;
-  };
-
-  const subs = stage.querySelectorAll(".rt-sub");
-  // 窄屏(移动): 账号列表在 hub 下方纵向铺开且可内滚, hub→行 的连线会贯穿整个
-  // 列表造成线网噪声且滚动后失真, 只保留 agent→hub 的连线; 行状态由点/条/文案表达
   const narrow = mqMobile.matches;
-  subs.forEach(sub => {
-    const wire = sub.__wire;
-    if (!wire) return;
-    if (narrow) { wire.setAttribute("d", ""); return; }
-    const upKey = sub.dataset.up;
-    const upSub = upKey ? stage.querySelector(`.rt-sub[data-key="${upKey}"]`) : null;
-    wire.setAttribute("d", upSub ? fromSub(b(upSub), b(sub)) : fromHub(b(sub)));
-  });
-
-  const rowItems = list.querySelectorAll("li:not(.rt-sub):not(.idle)");
+  const rowItems = list.querySelectorAll("li:not(.idle)");
   rowItems.forEach(row => {
     const wire = row.__wire;
     if (!wire) return;
     if (narrow) { wire.setAttribute("d", ""); return; }
-    const upKey = row.dataset.up;
-    const upSub = upKey ? stage.querySelector(`.rt-sub[data-key="${upKey}"]`) : null;
-    wire.setAttribute("d", upSub ? fromSub(b(upSub), b(row)) : fromHub(b(row)));
+    wire.setAttribute("d", fromHub(b(row)));
   });
 }
 
-/* 移动: 路由账号列表限高内滚, 未滚到底时底部渐隐(与 .filters 同款提示) */
-function rtAcctsFade(list) {
-  if (!list) return;
-  const scrollable = list.scrollHeight > list.clientHeight + 4;
-  const atEnd = list.scrollTop + list.clientHeight >= list.scrollHeight - 8;
-  list.classList.toggle("rt-fade-b", scrollable && !atEnd);
+function renderGroupRowHtml(g, isCur) {
+  const modesMap = getRoutingModesMap();
+  const gid = g.id || g.name || "group";
+  const sep = g.routing === "order" ? " → " : " · ";
+  const membersStr = (g.members || []).map(m => escHtml(m)).join(sep);
+  const mLabel = modesMap[g.routing || ""]?.[0] || t("rt_mode_smart");
+  const affLabel = g.affinity ? (AFF_OPTS.find(x => x[0] === g.affinity)?.[1] || g.affinity) : "";
+  const rulesCount = (g.rules || []).length;
+  const rulesTitle = (g.rules || []).map((r, i) => `${i + 1}. ${ruleSummaryText(r)} → ${r.use || ''}`).join("\n");
+
+  return `
+    <div class="rt-group ${isCur ? 'active' : ''}" data-gid="${escAttr(gid)}">
+      <span class="ics" style="display:flex;gap:3px;align-items:center;">
+        <span class="ic" style="width:18px;height:18px;">${renderProviderIcon(g.members?.[0] || 'default', 'G')}</span>
+      </span>
+      <div class="main">
+        <div class="nm">
+          <b>${escHtml(g.name || gid)}</b>
+          <code class="mdl">group/${escHtml(gid)}</code>
+          ${g.auto ? `<small class="auto">found by magpie</small>` : ''}
+        </div>
+        <div class="mem">${membersStr}</div>
+      </div>
+      <span class="tags">
+        <span class="tag">${escHtml(mLabel)}</span>
+        ${affLabel ? `<span class="tag">${escHtml(affLabel)}</span>` : ''}
+        ${rulesCount ? `<span class="tag" title="${escAttr(rulesTitle)}">${rulesCount === 1 ? '1 rule' : rulesCount + ' rules'}</span>` : ''}
+      </span>
+      <button type="button" class="text btn-edit-group" data-gid="${escAttr(gid)}">${t("rt_edit")}</button>
+    </div>
+  `;
+}
+
+function renderGroupEditorHtml(g, d, models, deciders) {
+  const modesMap = getRoutingModesMap();
+  const isNew = !g;
+  const gid = g ? (g.id || g.name) : "";
+  const routing = d.routing || "";
+  const affinity = d.affinity || "";
+  const effort = d.effort || "";
+  const rules = d.rules || [];
+  const members = d.members || [];
+  const hasIntents = rules.some(r => (r.intent || "").trim().length > 0);
+  const showClassifier = effort === "auto" || hasIntents;
+
+  const rHint = GROUP_HINT[routing] || GROUP_HINT[""];
+  const aHint = AFF_HINT[affinity] || AFF_HINT[""];
+
+  return `
+    <div class="editor rt-gedit" data-gid="${escAttr(gid)}">
+      <div class="ehead">
+        <b>${isNew ? t("rt_new_group") : escHtml(g.name || gid)}</b>
+        ${g?.auto ? `<span class="note">found by magpie — saving a change makes it yours</span>` : ''}
+      </div>
+
+      <label>Name</label>
+      <div>
+        <input type="text" class="g-in-name" value="${escAttr(d.name || '')}" placeholder="e.g. Opus anywhere" style="width:100%;max-width:320px;">
+        <div class="hint">Agents pick it as <code>group/${escHtml(d.id || d.name || 'group')}</code></div>
+      </div>
+
+      ${!isNew ? `
+        <label>ID</label>
+        <div>
+          <input type="text" class="g-in-id" value="${escAttr(d.id || gid)}" style="width:100%;max-width:320px;">
+        </div>
+      ` : ''}
+
+      <label>Models</label>
+      <div>
+        <div class="fallback">
+          <div class="fbl" id="gedit-members-list">
+            ${members.map((mId, i) => {
+              const [baseMdl, fixedEffort] = splitMemberId(mId);
+              const mObj = models.find(x => x.id === baseMdl || x.id === mId) || { id: mId, providerName: "Provider" };
+              const fixedLabel = fixedEffort ? `${fixedEffort} reasoning` : t("rt_follow_group");
+              return `
+                <div class="fbrow" data-idx="${i}">
+                  <span class="i">${i + 1}</span>
+                  <span class="ic">${renderProviderIcon(mObj.icon || mId, mId[0])}</span>
+                  <span class="n">
+                    <b>${escHtml(mObj.name || mId)}</b>
+                    <small>${escHtml(mObj.providerName || "")}</small>
+                  </span>
+                  <button type="button" class="rt-cond rt-fixed btn-member-effort ${fixedEffort ? 'on' : ''}" data-idx="${i}" title="${fixedEffort ? 'Fixed reasoning' : 'Follow group'}">
+                    ${escHtml(fixedLabel)}
+                  </button>
+                  ${i > 0 ? `<button type="button" class="text btn-member-up" data-idx="${i}">Up</button>` : ''}
+                  <button type="button" class="text btn-member-rm" data-idx="${i}">${t("rt_remove")}</button>
+                </div>
+              `;
+            }).join("")}
+          </div>
+          <button type="button" class="rt-gadd btn-add-member" style="margin-top:8px;">
+            <span>＋ ${t(members.length ? "rt_add_another_model" : "rt_add_model")}</span>
+          </button>
+        </div>
+        <div class="hint">The first answers for what the model can do. In order, they are tried top first.</div>
+      </div>
+
+      <label>${t("rt_routing_lbl")}</label>
+      <div>
+        <div class="segs gedit-routing-segs">
+          ${ROUTE_OPTS.map(([k, lbl]) => `
+            <span class="opt ${routing === k ? 'on' : ''}" data-val="${k}">${escHtml(t(modesMap[k]?.[0] || lbl))}</span>
+          `).join("")}
+        </div>
+        <div class="hint" id="gedit-routing-hint">${escHtml(rHint)}</div>
+      </div>
+
+      <label>${t("rt_stays_lbl")}</label>
+      <div>
+        <div class="segs gedit-stays-segs">
+          ${AFF_OPTS.map(([k, lbl]) => `
+            <span class="opt ${affinity === k ? 'on' : ''}" data-val="${k}">${escHtml(lbl)}</span>
+          `).join("")}
+        </div>
+        <div class="hint" id="gedit-stays-hint">${escHtml(aHint)}</div>
+      </div>
+
+      <label>${t("rt_rules_lbl")}</label>
+      <div>
+        <div class="fallback rt-rules">
+          <div class="fbl" id="gedit-rules-list">
+            ${rules.map((r, i) => {
+              const tokensVal = r.tokens || "";
+              const hasImg = !!r.images;
+              const effortVal = r.effort || "";
+              const agentVal = (r.agents && r.agents.length) ? r.agents.join(", ") : "any agent";
+              const intentVal = r.intent || "";
+              const targetMdl = r.use || members[0] || "";
+
+              return `
+                <div class="rt-rule" data-idx="${i}">
+                  <span class="i">${i + 1}</span>
+                  <div class="when" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;">
+                    <span class="w" style="color:var(--muted);font-size:12px;">When</span>
+                    <span class="rt-cond tk ${tokensVal ? 'on' : ''}">
+                      <span>≥</span>
+                      <input type="number" class="rule-in-tokens" data-idx="${i}" value="${escAttr(String(tokensVal))}" style="width:70px;background:none;border:none;color:inherit;outline:none;" placeholder="tokens">
+                      <span>tokens</span>
+                    </span>
+                    <button type="button" class="rt-cond btn-rule-img ${hasImg ? 'on' : ''}" data-idx="${i}">has an image</button>
+                    <button type="button" class="rt-cond btn-rule-effort ${effortVal ? 'on' : ''}" data-idx="${i}">
+                      ${effortVal ? `reasoning ≥ ${effortVal}` : 'any reasoning'}
+                    </button>
+                    <button type="button" class="rt-cond btn-rule-agent ${r.agents?.length ? 'on' : ''}" data-idx="${i}">
+                      ${escHtml(agentVal)}
+                    </button>
+                    <span class="rt-cond in ${intentVal ? 'on' : ''}">
+                      <span>asks for</span>
+                      <input type="text" class="rule-in-intent" data-idx="${i}" value="${escAttr(intentVal)}" placeholder="e.g. writing tests" style="width:140px;background:none;border:none;color:inherit;outline:none;">
+                    </span>
+                  </div>
+                  <div class="rt-use" style="display:flex;align-items:center;gap:6px;margin-top:4px;">
+                    <span class="w" style="color:var(--muted);font-size:12px;">send to</span>
+                    <button type="button" class="rt-cond on btn-rule-use" data-idx="${i}">
+                      <span>${escHtml(targetMdl)}</span>
+                    </button>
+                  </div>
+                  <span class="ctl" style="display:flex;gap:4px;align-items:center;">
+                    ${i > 0 ? `<button type="button" class="text btn-rule-up" data-idx="${i}">Up</button>` : ''}
+                    <button type="button" class="text btn-rule-rm" data-idx="${i}">${t("rt_remove")}</button>
+                  </span>
+                </div>
+              `;
+            }).join("")}
+          </div>
+          <button type="button" class="rt-gadd btn-add-rule" style="margin-top:8px;">
+            <span>＋ ${t("rt_add_rule")}</span>
+          </button>
+        </div>
+        <div class="hint">Checked top first when you send a message: the first that matches sends that turn to its model first.</div>
+      </div>
+
+      <label>${t("rt_effort_lbl")}</label>
+      <div>
+        <div class="segs gedit-effort-segs">
+          <span class="opt ${!effort ? 'on' : ''}" data-val="">Agent's</span>
+          <span class="opt ${effort === 'auto' ? 'on' : ''}" data-val="auto">Picked per turn</span>
+        </div>
+        <div class="hint">${effort === 'auto' ? "As a turn begins, the classifier rates how hard it is..." : "Each request reasons as much as the agent asked."}</div>
+      </div>
+
+      ${showClassifier ? `
+        <label>${t("rt_classifier_lbl")}</label>
+        <div>
+          <button type="button" class="rt-cond on btn-pick-classifier">
+            <span>${escHtml(d.classifier || deciders[0]?.id || "opencode-zen/jev-1.13-free")}</span>
+          </button>
+          <div class="hint">As a turn begins, this model is asked which intent matches.</div>
+        </div>
+      ` : ''}
+
+      <div class="bar">
+        ${!isNew ? `<button type="button" class="text danger btn-del-group">${t("rt_remove")}</button>` : ''}
+        <span class="grow"></span>
+        <button type="button" class="text btn-cancel-group">${t("rt_cancel")}</button>
+        <button type="button" class="text primary btn-save-group">${t("rt_save")}</button>
+      </div>
+    </div>
+  `;
+}
+
+function bindGroupEvents(container, gItems, availableModels, availableDeciders) {
+  container.querySelectorAll(".rt-group").forEach(el => {
+    el.onclick = (e) => {
+      if (e.target.closest("button")) return;
+      const gid = el.dataset.gid;
+      if (curRoutingGroupEdit && curRoutingGroupEdit.id === gid) {
+        curRoutingGroupEdit = null;
+      } else {
+        const targetG = gItems.find(x => (x.id || x.name) === gid) || { id: gid, name: gid, members: [], rules: [] };
+        curRoutingGroupEdit = { id: gid, draft: JSON.parse(JSON.stringify(targetG)) };
+      }
+      renderMagpieRouting(curMagpieRoutingData);
+    };
+  });
+
+  container.querySelectorAll(".btn-edit-group").forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const gid = btn.dataset.gid;
+      if (curRoutingGroupEdit && curRoutingGroupEdit.id === gid) {
+        curRoutingGroupEdit = null;
+      } else {
+        const targetG = gItems.find(x => (x.id || x.name) === gid) || { id: gid, name: gid, members: [], rules: [] };
+        curRoutingGroupEdit = { id: gid, draft: JSON.parse(JSON.stringify(targetG)) };
+      }
+      renderMagpieRouting(curMagpieRoutingData);
+    };
+  });
+
+  const ed = container.querySelector(".rt-gedit");
+  if (!ed || !curRoutingGroupEdit) return;
+  const d = curRoutingGroupEdit.draft;
+
+  const inName = ed.querySelector(".g-in-name");
+  if (inName) { inName.oninput = () => { d.name = inName.value; }; }
+  const inId = ed.querySelector(".g-in-id");
+  if (inId) { inId.oninput = () => { d.id = inId.value; }; }
+
+  ed.querySelectorAll(".btn-member-effort").forEach(btn => {
+    btn.onclick = () => {
+      const idx = parseInt(btn.dataset.idx, 10);
+      const mId = d.members[idx];
+      if (!mId) return;
+      const [baseMdl, curEff] = splitMemberId(mId);
+      const effCycle = ["", "low", "medium", "high", "max"];
+      const nextEff = effCycle[(effCycle.indexOf(curEff) + 1) % effCycle.length];
+      d.members[idx] = nextEff ? `${baseMdl}:${nextEff}` : baseMdl;
+      renderMagpieRouting(curMagpieRoutingData);
+    };
+  });
+
+  ed.querySelectorAll(".btn-member-up").forEach(btn => {
+    btn.onclick = () => {
+      const idx = parseInt(btn.dataset.idx, 10);
+      if (idx > 0) {
+        const tmp = d.members[idx];
+        d.members[idx] = d.members[idx - 1];
+        d.members[idx - 1] = tmp;
+        renderMagpieRouting(curMagpieRoutingData);
+      }
+    };
+  });
+
+  ed.querySelectorAll(".btn-member-rm").forEach(btn => {
+    btn.onclick = () => {
+      const idx = parseInt(btn.dataset.idx, 10);
+      d.members.splice(idx, 1);
+      renderMagpieRouting(curMagpieRoutingData);
+    };
+  });
+
+  const btnAddMember = ed.querySelector(".btn-add-member");
+  if (btnAddMember) {
+    btnAddMember.onclick = () => {
+      const candidate = availableModels.find(m => !d.members.some(x => x.startsWith(m.id))) || availableModels[0];
+      if (candidate) {
+        d.members.push(candidate.id);
+        renderMagpieRouting(curMagpieRoutingData);
+      }
+    };
+  }
+
+  ed.querySelectorAll(".gedit-routing-segs .opt").forEach(opt => {
+    opt.onclick = () => {
+      d.routing = opt.dataset.val;
+      renderMagpieRouting(curMagpieRoutingData);
+    };
+  });
+
+  ed.querySelectorAll(".gedit-stays-segs .opt").forEach(opt => {
+    opt.onclick = () => {
+      d.affinity = opt.dataset.val;
+      renderMagpieRouting(curMagpieRoutingData);
+    };
+  });
+
+  ed.querySelectorAll(".rule-in-tokens").forEach(inp => {
+    inp.oninput = () => {
+      const idx = parseInt(inp.dataset.idx, 10);
+      if (d.rules[idx]) {
+        d.rules[idx].tokens = parseInt(inp.value, 10) || 0;
+        inp.closest(".rt-cond")?.classList.toggle("on", !!d.rules[idx].tokens);
+      }
+    };
+  });
+
+  ed.querySelectorAll(".btn-rule-img").forEach(btn => {
+    btn.onclick = () => {
+      const idx = parseInt(btn.dataset.idx, 10);
+      if (d.rules[idx]) {
+        d.rules[idx].images = !d.rules[idx].images;
+        renderMagpieRouting(curMagpieRoutingData);
+      }
+    };
+  });
+
+  ed.querySelectorAll(".btn-rule-effort").forEach(btn => {
+    btn.onclick = () => {
+      const idx = parseInt(btn.dataset.idx, 10);
+      if (d.rules[idx]) {
+        const cycle = ["", "on", "low", "medium", "high", "max"];
+        const cur = d.rules[idx].effort || "";
+        d.rules[idx].effort = cycle[(cycle.indexOf(cur) + 1) % cycle.length];
+        renderMagpieRouting(curMagpieRoutingData);
+      }
+    };
+  });
+
+  ed.querySelectorAll(".rule-in-intent").forEach(inp => {
+    inp.oninput = () => {
+      const idx = parseInt(inp.dataset.idx, 10);
+      if (d.rules[idx]) {
+        d.rules[idx].intent = inp.value;
+        inp.closest(".rt-cond")?.classList.toggle("on", !!inp.value.trim());
+      }
+    };
+  });
+
+  ed.querySelectorAll(".btn-rule-use").forEach(btn => {
+    btn.onclick = () => {
+      const idx = parseInt(btn.dataset.idx, 10);
+      if (d.rules[idx] && d.members.length) {
+        const curUse = d.rules[idx].use || d.members[0];
+        const nextIdx = (d.members.indexOf(curUse) + 1) % d.members.length;
+        d.rules[idx].use = d.members[nextIdx];
+        renderMagpieRouting(curMagpieRoutingData);
+      }
+    };
+  });
+
+  ed.querySelectorAll(".btn-rule-up").forEach(btn => {
+    btn.onclick = () => {
+      const idx = parseInt(btn.dataset.idx, 10);
+      if (idx > 0 && d.rules[idx]) {
+        const tmp = d.rules[idx];
+        d.rules[idx] = d.rules[idx - 1];
+        d.rules[idx - 1] = tmp;
+        renderMagpieRouting(curMagpieRoutingData);
+      }
+    };
+  });
+
+  ed.querySelectorAll(".btn-rule-rm").forEach(btn => {
+    btn.onclick = () => {
+      const idx = parseInt(btn.dataset.idx, 10);
+      if (d.rules[idx]) {
+        d.rules.splice(idx, 1);
+        renderMagpieRouting(curMagpieRoutingData);
+      }
+    };
+  });
+
+  const btnAddRule = ed.querySelector(".btn-add-rule");
+  if (btnAddRule) {
+    btnAddRule.onclick = () => {
+      d.rules.push({ use: d.members[d.members.length - 1] || d.members[0] || "", tokens: 0, images: false, effort: "", agents: [], intent: "" });
+      renderMagpieRouting(curMagpieRoutingData);
+    };
+  }
+
+  ed.querySelectorAll(".gedit-effort-segs .opt").forEach(opt => {
+    opt.onclick = () => {
+      d.effort = opt.dataset.val;
+      if (d.effort === "auto" && !d.classifier && availableDeciders.length) {
+        d.classifier = availableDeciders[0].id;
+      }
+      renderMagpieRouting(curMagpieRoutingData);
+    };
+  });
+
+  const btnPickClassifier = ed.querySelector(".btn-pick-classifier");
+  if (btnPickClassifier) {
+    btnPickClassifier.onclick = () => {
+      const cycle = availableDeciders.map(x => x.id);
+      if (cycle.length) {
+        const next = cycle[(cycle.indexOf(d.classifier) + 1) % cycle.length];
+        d.classifier = next;
+        renderMagpieRouting(curMagpieRoutingData);
+      }
+    };
+  }
+
+  const btnCancel = ed.querySelector(".btn-cancel-group");
+  if (btnCancel) {
+    btnCancel.onclick = () => {
+      curRoutingGroupEdit = null;
+      renderMagpieRouting(curMagpieRoutingData);
+    };
+  }
+
+  const btnDel = ed.querySelector(".btn-del-group");
+  if (btnDel) {
+    btnDel.onclick = () => {
+      if (BOOT.static) {
+        toast(t("rt_static_readonly_hint"));
+        curRoutingGroupEdit = null;
+        renderMagpieRouting(curMagpieRoutingData);
+        return;
+      }
+      const idx = gItems.findIndex(x => (x.id || x.name) === curRoutingGroupEdit.id);
+      if (idx >= 0) gItems.splice(idx, 1);
+      curRoutingGroupEdit = null;
+      renderMagpieRouting(curMagpieRoutingData);
+    };
+  }
+
+  const btnSave = ed.querySelector(".btn-save-group");
+  if (btnSave) {
+    btnSave.onclick = () => {
+      if (BOOT.static) {
+        toast(t("rt_static_readonly_hint"));
+        curRoutingGroupEdit = null;
+        renderMagpieRouting(curMagpieRoutingData);
+        return;
+      }
+      const gid = curRoutingGroupEdit.id;
+      if (!gid) {
+        gItems.unshift({ ...d, id: d.id || d.name || "new-group" });
+      } else {
+        const item = gItems.find(x => (x.id || x.name) === gid);
+        if (item) Object.assign(item, d);
+      }
+      toast(t("rt_save") + " ✓");
+      curRoutingGroupEdit = null;
+      renderMagpieRouting(curMagpieRoutingData);
+    };
+  }
 }
 
 function renderMagpieRouting(data) {
@@ -4800,11 +5573,9 @@ function renderMagpieRouting(data) {
 
   if (maskBtn && !maskBtn.dataset.bound) {
     maskBtn.dataset.bound = "1";
+    maskBtn.setAttribute("aria-pressed", String(routingMaskAccounts));
     maskBtn.onclick = () => {
-      routingMaskAccounts = !routingMaskAccounts;
-      el.classList.toggle("masking", routingMaskAccounts);
-      maskBtn.setAttribute("aria-pressed", String(routingMaskAccounts));
-      maskBtn.querySelector("span").textContent = routingMaskAccounts ? t("mp_show_accounts") : t("mp_hide_accounts");
+      setGlobalAccountsMask(!routingMaskAccounts);
     };
   }
 
@@ -4819,14 +5590,9 @@ function renderMagpieRouting(data) {
   }
 
   const curRoute = curRoutingPicked || routes[0];
-  const group = curRoute.group || { id: "default", name: "default", routing: "" };
+  const group = (curRoutingGroupFilter && (data.groups || []).find(g => g.name === curRoutingGroupFilter)) || curRoute.group || { id: "default", name: "default", routing: "" };
   const routingMode = group.routing || "";
-  const modesMap = {
-    "": [t("rt_mode_smart"), t("rt_mode_smart_desc")],
-    order: [t("rt_mode_order"), t("rt_mode_order_desc")],
-    rotate: [t("rt_mode_rotate"), t("rt_mode_rotate_desc")],
-    usage: [t("rt_mode_usage"), t("rt_mode_usage_desc")]
-  };
+  const modesMap = getRoutingModesMap();
   const modeInfo = modesMap[routingMode] || modesMap[""];
 
   // Agents active on stage
@@ -4845,7 +5611,111 @@ function renderMagpieRouting(data) {
 
   box.innerHTML = "";
 
-  // Top info
+  const totalMs = curRoute.ms || 0;
+  const ttftMs = curRoute.ttft || 0;
+  const outTokens = curRoute.out || (curRoute.tokens?.output || 0) || 1200;
+  const inTokens = curRoute.tokens?.input || curRoute.tokens || 0;
+  const speed = (ttftMs && totalMs > ttftMs) ? Math.round(outTokens / ((totalMs - ttftMs) / 1000)) : 311;
+  const targetProv = curRoute.provider || "DeepSeek";
+  const targetMdl = curRoute.served || curRoute.model || "deepseek-flash";
+  const winnerWho = curRoute.who || curRoute.id || curRoute.provider || "account";
+
+  // 移动端专用清晰流水线卡片 (PC 宽屏保持原有 3 列连线并在 CSS 中隐藏此卡)
+  const pipelineEl = document.createElement("div");
+  pipelineEl.className = "rt-pipeline-m";
+
+  const isAnswering = (curRoute.tries || []).some(tr => !tr.done);
+  const statusBadge = isAnswering ? `🟢 ${t("rt_answering")}` : `🟢 200 OK (${rtTook(totalMs)})`;
+
+  const recentChipsHtml = routes.slice(0, 8).map((r, i) => {
+    const isPick = curRoute.id === r.id;
+    const ag = r.agent || "pi";
+    const prov = r.provider || "API";
+    const timeStr = rtClock(r.time) || "";
+    return `
+      <button type="button" class="rt-m-req-chip ${isPick ? 'active' : ''}" data-idx="${i}">
+        <span class="dot ${isPick ? 'live' : ''}"></span>
+        <b>${escHtml(ag)}</b>
+        <span style="opacity:0.4;">›</span>
+        <em>${escHtml(prov)}</em>
+        <small>${escHtml(timeStr)}</small>
+      </button>
+    `;
+  }).join("");
+
+  pipelineEl.innerHTML = `
+    <div class="rt-m-reqs-bar">
+      <span class="rt-m-reqs-label">${t("rt_recent_tasks")}</span>
+      <div class="rt-m-reqs-scroll">${recentChipsHtml}</div>
+    </div>
+    <div class="rt-m-pipeline-card">
+      <div class="rt-m-pipeline-title">
+        <span><b>#${escHtml(String(curRoute.seq || curRoute.id || ""))}</b> · ${rtClock(curRoute.time) || ""}</span>
+        <span>group/${escHtml(group.name || "default")}</span>
+      </div>
+      <div class="rt-m-flow">
+        <!-- 任务发起 -->
+        <div class="rt-m-node rt-m-src">
+          <span class="rt-m-node-tag">${t("rt_task_source")}</span>
+          <span class="rt-ic"><span class="ic">${renderProviderIcon(curRoute.agent || "pi", (curRoute.agent || "P")[0])}</span></span>
+          <b>${escHtml(curRoute.agent || "pi")}</b>
+          <code class="mdl">${escHtml(curRoute.model || "default")}</code>
+        </div>
+        <!-- 箭头 -->
+        <div class="rt-m-arrow">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+        </div>
+        <!-- 路由决策 -->
+        <div class="rt-m-node rt-m-hub">
+          <span class="rt-m-node-tag">${t("rt_gateway")}</span>
+          <svg viewBox="0 0 44 44" class="rt-bird" aria-hidden="true"><use href="#bird"></use></svg>
+          <b>Magpie</b>
+          <small>${escHtml(modeInfo[0])}</small>
+        </div>
+        <!-- 箭头 -->
+        <div class="rt-m-arrow">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+        </div>
+        <!-- 命中节点 (主角) -->
+        <div class="rt-m-node rt-m-winner">
+          <span class="rt-m-node-tag winner-tag">${t("rt_assigned_node")}</span>
+          <span class="rt-ic"><span class="ic">${renderProviderIcon(targetProv.toLowerCase(), targetProv[0])}</span></span>
+          <b>${escHtml(targetProv)}</b>
+          <code class="mdl highlight">${escHtml(targetMdl)}</code>
+        </div>
+      </div>
+      <!-- 命中节点执行详情 -->
+      <div class="rt-m-winner-summary">
+        <div class="rt-m-winner-row1">
+          <b>
+            <span class="ic">${renderProviderIcon(targetProv.toLowerCase(), targetProv[0])}</span>
+            <span class="pii">${escHtml(winnerWho)}</span>
+            <code class="mdl">${escHtml(targetMdl)}</code>
+          </b>
+          <span class="rt-m-winner-status">${statusBadge}</span>
+        </div>
+        <div class="rt-m-winner-row2">
+          <span>${t("rt_completed_in", { ms: rtTook(totalMs) })}</span>
+          <span>TTFT <b>${rtTook(ttftMs)}</b></span>
+          <span>${t("rt_speed_tok_s", { n: speed })}</span>
+          <span>Token <b>${fmtTokens(inTokens)}</b> in / <b>${fmtTokens(outTokens)}</b> out</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  pipelineEl.querySelectorAll(".rt-m-req-chip").forEach(btn => {
+    btn.onclick = () => {
+      const idx = Number(btn.dataset.idx);
+      if (routes[idx]) {
+        curRoutingPicked = routes[idx];
+        renderMagpieRouting(curMagpieRoutingData);
+      }
+    };
+  });
+  box.appendChild(pipelineEl);
+
+  // Top info (PC 端显示)
   const topEl = document.createElement("div");
   topEl.className = "rt-top";
   const orderList = curRoute.order || [];
@@ -4862,10 +5732,27 @@ function renderMagpieRouting(data) {
   }                                                                  // 报错转交/休息的座位不亮
   const enabledCount = orderList.filter(x => !x.fallback).length || orderList.length || 30;
   topEl.innerHTML = `
-    <div class="rt-what"><b>${escHtml(group.name || curRoute.provider || "default")}</b> · ${t("rt_routing_group_label")} · ${t("rt_unit_enabled", { n: enabledCount })} · ${t("rt_unit_agents", { n: recentAgents.length })}</div>
+    <div class="rt-what" style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;">
+      <b>${escHtml(group.name || curRoute.provider || "default")}</b> · ${t("rt_routing_group_label")} · ${t("rt_unit_enabled", { n: enabledCount })} · ${t("rt_unit_agents", { n: recentAgents.length })}
+      ${curRoutingPicked ? `
+        <span style="display:inline-flex;align-items:center;gap:6px;margin-left:auto;">
+          <span style="font-size:11.5px;color:var(--amber);background:rgba(255,159,10,0.1);padding:1px 7px;border-radius:4px;border:1px solid rgba(255,159,10,0.3);">
+            #${escHtml(String(curRoute.seq || curRoute.id || ""))} · ${escHtml(rtClock(curRoute.time) || "")}
+          </span>
+          <button type="button" class="btn-rt-live" id="btn-rt-live-top">▶ ${t("rt_tab_live")}</button>
+        </span>
+      ` : ""}
+    </div>
     <p class="rt-mode">${escHtml(modeInfo[1])}</p>
   `;
   box.appendChild(topEl);
+  const btnLiveTop = topEl.querySelector("#btn-rt-live-top");
+  if (btnLiveTop) {
+    btnLiveTop.onclick = () => {
+      curRoutingPicked = null;
+      renderMagpieRouting(curMagpieRoutingData);
+    };
+  }
 
   // Stage
   const stageEl = document.createElement("div");
@@ -4884,6 +5771,8 @@ function renderMagpieRouting(data) {
     node.className = "rt-node rt-src";
     const hue = rtHue(a.id);
     node.style.setProperty("--agent", hue);
+    node.title = `${a.name} · ${t("rt_tools_title")}`;
+    node.onclick = () => showRoutingToolsModal(curRoute);
     node.innerHTML = `
       <span class="rt-ic"><span class="ic">${renderProviderIcon(a.id, a.id[0])}</span></span>
       <b>${escHtml(a.name)}</b>
@@ -4906,110 +5795,86 @@ function renderMagpieRouting(data) {
     <svg viewBox="0 0 44 44" class="rt-bird" aria-hidden="true"><use href="#bird"></use></svg>
     <b>magpie</b>
     <small>127.0.0.1:3426</small>
-    <i>${escHtml(modeInfo[0])} ›</i>
+    <i class="rt-go" title="${escAttr(t("rt_policy_title"))}">${escHtml(modeInfo[0])}</i>
   `;
+  const hubGo = hubEl.querySelector("i.rt-go");
+  if (hubGo) {
+    hubGo.onclick = () => showRoutingPolicyModal(group.routing || "");
+  }
 
   // Accounts & candidate seats list
   const acctsEl = document.createElement("ol");
   acctsEl.className = "rt-accts";
 
-  const groupedSeats = [];
-  const pMap = new Map();
   orderList.forEach(w => {
-    const prov = w.name || w.provider || "other";
-    const model = w.model || "";
-    const key = prov + "::" + model;
-    if (!pMap.has(key)) {
-      const g = { prov, model, icon: w.icon || prov, items: [] };
-      pMap.set(key, g);
-      groupedSeats.push(g);
-    }
-    pMap.get(key).items.push(w);
-  });
+    const rowLi = document.createElement("li");
+    const rkey = seatKey(w);
+    const isTrying = tryState.trying.has(rkey);
+    const isAnswered = tryState.answered.has(rkey);
+    const isWinner = isTrying || isAnswered;
+    const isResting = !!w.rest;
 
-  groupedSeats.forEach(g => {
-    if (g.items.length > 1) {
-      const subLi = document.createElement("li");
-      subLi.className = "rt-sub";
-      subLi.dataset.key = g.prov;
-      subLi.innerHTML = `
-        <span class="ic">${renderProviderIcon(g.icon, g.prov[0])}</span>
-        <b>${escHtml(g.prov)}</b>
-        <span style="font-size:11px;color:var(--muted);">${t("rt_unit_accounts", { n: g.items.length })}</span>
-        <code class="mdl">${escHtml(g.model || "auto")}</code>
-        <i style="margin-left:auto;">${t("rt_unit_available", { n: g.items.filter(x => !x.rest).length })}</i>
-      `;
-      const subWire = document.createElementNS(NS, "path");
-      // 悬停分组行同样点亮它的连线
-      subLi.addEventListener("mouseenter", () => {
-        subWire.style.setProperty("--agent", rtHue(curRoute.agent));
-        subWire.classList.add("lit");
-      });
-      subLi.addEventListener("mouseleave", () => subWire.classList.remove("lit"));
-      wiresSvg.appendChild(subWire);
-      subLi.__wire = subWire;
-      acctsEl.appendChild(subLi);
+    if (isWinner) rowLi.classList.add("on");
+    if (isResting) rowLi.classList.add("rest");
+
+    let stText = "";
+    if (isTrying) stText = t("rt_answering");
+    else if (isAnswered) stText = t("rt_answered");
+    else if (isResting) stText = t("rt_resting");
+    else if (w.known && w.used !== undefined) {
+      const remain = Math.max(0, 100 - Math.round(w.used));
+      stText = `${t("rt_remain_pct", { n: remain })} · ${t("rt_renews_days", { n: 15 })}`;
+    } else if (w.credits) {
+      stText = `${Number(w.credits).toLocaleString()} · ${t("rt_remain_pct", { n: 40 })}`;
+    } else if (w.kind === "key") {
+      stText = t("rt_one_key");
+    } else {
+      stText = t("rt_ready");
     }
 
-    g.items.forEach(w => {
-      const rowLi = document.createElement("li");
-      if (g.items.length > 1) rowLi.dataset.up = g.prov;
-      const rkey = seatKey(w);
-      const isTrying = tryState.trying.has(rkey);
-      const isAnswered = tryState.answered.has(rkey);
-      const isWinner = isTrying || isAnswered;
-      const isResting = !!w.rest;
+    const whoStr = w.who || w.id || w.name || "account";
+    const usedPct = w.used !== undefined ? Math.min(100, Math.round(w.used)) : 0;
+    const barRemainPct = 100 - usedPct;
 
-      if (isWinner) rowLi.classList.add("on");
-      if (isResting) rowLi.classList.add("rest");
+    rowLi.innerHTML = `
+      <i class="dot"></i>
+      <b>
+        <span class="ic">${renderProviderIcon(w.icon || w.provider || "generic", (w.name || "M")[0])}</span>
+        <span class="who"><span class="pii">${escHtml(whoStr)}</span></span>
+        <span style="font-size:11px;color:var(--muted);margin-left:4px;">${escHtml(w.plan || "")}</span>
+        <code class="mdl">${escHtml(w.model || "")}</code>
+        ${w.fallback ? `<small class="fb">${t("rt_fallback")}</small>` : ""}
+      </b>
+      <em>${escHtml(stText)}</em>
+      <div class="bar"><i style="width:${barRemainPct}%;"></i></div>
+    `;
 
-      let stText = "";
-      if (isTrying) stText = t("rt_answering");
-      else if (isAnswered) stText = t("rt_answered");
-      else if (isResting) stText = t("rt_resting");
-      else if (w.known && w.used !== undefined) {
-        const remain = Math.max(0, 100 - Math.round(w.used));
-        stText = `${t("rt_remain_pct", { n: remain })} · ${t("rt_renews_days", { n: 15 })}`;
-      } else if (w.credits) {
-        stText = `${Number(w.credits).toLocaleString()} · ${t("rt_remain_pct", { n: 40 })}`;
-      } else if (w.kind === "key") {
-        stText = t("rt_one_key");
-      } else {
-        stText = t("rt_ready");
-      }
-
-      const whoStr = w.who || w.id || w.name || "account";
-      const usedPct = w.used !== undefined ? Math.min(100, Math.round(w.used)) : 0;
-      const barRemainPct = 100 - usedPct;
-
-      rowLi.innerHTML = `
-        <i class="dot"></i>
-        <b>
-          <span class="ic">${renderProviderIcon(w.icon || g.icon, (w.name || "M")[0])}</span>
-          <span class="who"><span class="pii">${escHtml(whoStr)}</span></span>
-          <span style="font-size:11px;color:var(--muted);margin-left:4px;">${escHtml(w.plan || "")}</span>
-          <code class="mdl">${escHtml(w.model || "")}</code>
-          ${w.fallback ? `<small class="fb">${t("rt_fallback")}</small>` : ""}
-        </b>
-        <em>${escHtml(stText)}</em>
-        <div class="bar"><i style="width:${barRemainPct}%;"></i></div>
-      `;
-
-      const rowWire = document.createElementNS(NS, "path");
-      if (isWinner) {
-        rowWire.classList.add("live");
-        rowWire.style.setProperty("--agent", rtHue(curRoute.agent));
-      }
-      // 悬停点亮该行的连线(默认全灰, 指到哪条哪条变绿): .lit 样式早就在 CSS 里
-      rowLi.addEventListener("mouseenter", () => {
-        rowWire.style.setProperty("--agent", rtHue(curRoute.agent));
-        rowWire.classList.add("lit");
-      });
-      rowLi.addEventListener("mouseleave", () => rowWire.classList.remove("lit"));
-      wiresSvg.appendChild(rowWire);
-      rowLi.__wire = rowWire;
-      acctsEl.appendChild(rowLi);
+    const rowWire = document.createElementNS(NS, "path");
+    if (isWinner) {
+      rowWire.classList.add("live");
+      rowWire.style.setProperty("--agent", rtHue(curRoute.agent));
+    }
+    rowLi.onclick = () => {
+      curRoutingAccountFilter = (curRoutingAccountFilter === whoStr ? null : whoStr);
+      renderMagpieRouting(curMagpieRoutingData);
+      const reqsList = $("rt-reqs-list");
+      if (reqsList) reqsList.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    };
+    if (curRoutingAccountFilter === whoStr) {
+      rowLi.classList.add("filtered");
+    }
+    // 悬停点亮该行的连线(默认全灰, 指到哪条哪条变绿)
+    rowLi.addEventListener("mouseenter", () => {
+      rowWire.style.setProperty("--agent", rtHue(curRoute.agent));
+      rowWire.classList.add("lit");
     });
+    rowLi.addEventListener("mouseleave", () => {
+      rowWire.classList.remove("lit");
+    });
+
+    wiresSvg.appendChild(rowWire);
+    rowLi.__wire = rowWire;
+    acctsEl.appendChild(rowLi);
   });
 
   const skySvg = document.createElementNS(NS, "svg");
@@ -5027,13 +5892,6 @@ function renderMagpieRouting(data) {
   const footEl = document.createElement("div");
   footEl.className = "rt-foot";
 
-  const totalMs = curRoute.ms || 0;
-  const ttftMs = curRoute.ttft || 0;
-  const outTokens = curRoute.out || (curRoute.tokens?.output || 0) || 1200;
-  const speed = (ttftMs && totalMs > ttftMs) ? Math.round(outTokens / ((totalMs - ttftMs) / 1000)) : 311;
-  const targetProv = curRoute.provider || "DeepSeek";
-  const targetMdl = curRoute.served || curRoute.model || "deepseek-flash";
-
   footEl.innerHTML = `
     <p class="rt-cap in">
       <b>${escHtml(targetProv)}</b> (${escHtml(targetMdl)}) ${t("rt_completed_in", { ms: rtTook(totalMs) })} · ${fmtTokens(curRoute.tokens?.input || curRoute.tokens || 0)} token · ${t("rt_first_resp", { ms: rtTook(ttftMs) })} · ${t("rt_speed_tok_s", { n: speed })} · ${t("rt_cache_hit_100")}
@@ -5046,6 +5904,19 @@ function renderMagpieRouting(data) {
   `;
   box.appendChild(footEl);
 
+  const errStat = footEl.querySelector(".rt-errs");
+  if (errStat) {
+    errStat.style.cursor = "pointer";
+    errStat.title = t("rt_show_latest_err");
+    errStat.onclick = () => {
+      const errRoute = routes.find(r => (r.status || 0) >= 400 || (r.tries || []).some(tr => (tr.status || 0) >= 400));
+      if (errRoute) {
+        curRoutingPicked = errRoute;
+        renderMagpieRouting(curMagpieRoutingData);
+      }
+    };
+  }
+
   // Log: Decision breakdown & timing
   const logEl = document.createElement("div");
   logEl.className = "rt-log";
@@ -5056,8 +5927,13 @@ function renderMagpieRouting(data) {
 
   logEl.innerHTML = `
     <div class="rt-log-head">
-      <span>${t("rt_log_title")}</span>
+      <span>${curRoutingPicked ? (t("rt_log_title") + " (" + (rtClock(curRoute.time) || "") + ")") : t("rt_log_title")}</span>
       <span class="grow"></span>
+      ${curRoutingPicked ? `
+        <button type="button" class="text" id="btn-back-to-live" style="color:var(--accent);font-size:12px;font-weight:600;margin-right:12px;cursor:pointer;">
+          ▶ ${t("rt_back_to_live")}
+        </button>
+      ` : ""}
       <span style="display:flex;gap:12px;font-size:11px;font-weight:400;color:var(--muted);">
         <span style="cursor:pointer;" onclick="document.querySelector('[data-atab=usage]')?.click()">${t("mp_view_detail")}</span>
         <span style="cursor:pointer;" onclick="refreshMagpieRouting(true)">↻</span>
@@ -5095,6 +5971,14 @@ function renderMagpieRouting(data) {
     </div>
   `;
   box.appendChild(logEl);
+
+  const btnBackLive = logEl.querySelector("#btn-back-to-live");
+  if (btnBackLive) {
+    btnBackLive.onclick = () => {
+      curRoutingPicked = null;
+      renderMagpieRouting(curMagpieRoutingData);
+    };
+  }
 
   // Context window waffle card
   const prompt = curRoute.prompt || {};
@@ -5146,6 +6030,9 @@ function renderMagpieRouting(data) {
   const ctxCard = document.createElement("div");
   ctxCard.className = "ctx-card";
   ctxCard.style.marginTop = "18px";
+  const filteredItems = (ctxActiveTab === "all") ? allItems : allItems.filter(it => it.kind === ctxActiveTab);
+  const displayItems = ctxShowAll ? filteredItems : filteredItems.slice(0, 10);
+
   ctxCard.innerHTML = `
     <div style="font-size:12.5px;color:var(--muted);margin-bottom:8px;">
       <span class="pii">${escHtml(curRoute.who || curRoute.id || "account")}</span> (${escHtml(targetMdl)}) high effort
@@ -5169,19 +6056,20 @@ function renderMagpieRouting(data) {
       <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--k-chat);margin-right:4px;"></i>${t("rt_tab_chat")} ${(chatTok/1000).toFixed(1)}K</span>
     </div>
     <div class="ctx-contents" style="margin-top:14px;border-top:1px solid var(--line);padding-top:10px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
         <span style="font-size:12px;font-weight:600;color:var(--fg);">${t("rt_ctx_content")}</span>
-        <div class="ctx-tabs" style="display:flex;gap:4px;font-size:11px;">
-          <span style="padding:2px 8px;border-radius:5px;background:var(--card-2);color:var(--fg);cursor:pointer;">${t("rt_tab_all")}</span>
-          <span style="padding:2px 8px;border-radius:5px;color:var(--muted);cursor:pointer;">${t("rt_tab_sys")}</span>
-          <span style="padding:2px 8px;border-radius:5px;color:var(--muted);cursor:pointer;">${t("rt_tab_tools")}</span>
-          <span style="padding:2px 8px;border-radius:5px;color:var(--muted);cursor:pointer;">${t("rt_tab_files")}</span>
-          <span style="padding:2px 8px;border-radius:5px;color:var(--muted);cursor:pointer;">${t("rt_tab_results")}</span>
-          <span style="padding:2px 8px;border-radius:5px;color:var(--muted);cursor:pointer;">${t("rt_tab_chat")}</span>
+        <button type="button" class="btn-rt-live" id="btn-show-tools-modal" style="font-size:11px;padding:2px 8px;">🛠 ${t("rt_tools_title")}</button>
+        <div class="ctx-tabs" style="display:flex;gap:4px;font-size:11px;margin-left:auto;">
+          <span data-tab="all" class="${ctxActiveTab === 'all' ? 'active' : ''}" style="padding:2px 8px;border-radius:5px;${ctxActiveTab === 'all' ? 'background:var(--card-2);color:var(--fg);font-weight:600;' : 'color:var(--muted);'}cursor:pointer;">${t("rt_tab_all")}</span>
+          <span data-tab="system" class="${ctxActiveTab === 'system' ? 'active' : ''}" style="padding:2px 8px;border-radius:5px;${ctxActiveTab === 'system' ? 'background:var(--card-2);color:var(--fg);font-weight:600;' : 'color:var(--muted);'}cursor:pointer;">${t("rt_tab_sys")}</span>
+          <span data-tab="tools" class="${ctxActiveTab === 'tools' ? 'active' : ''}" style="padding:2px 8px;border-radius:5px;${ctxActiveTab === 'tools' ? 'background:var(--card-2);color:var(--fg);font-weight:600;' : 'color:var(--muted);'}cursor:pointer;">${t("rt_tab_tools")}</span>
+          <span data-tab="files" class="${ctxActiveTab === 'files' ? 'active' : ''}" style="padding:2px 8px;border-radius:5px;${ctxActiveTab === 'files' ? 'background:var(--card-2);color:var(--fg);font-weight:600;' : 'color:var(--muted);'}cursor:pointer;">${t("rt_tab_files")}</span>
+          <span data-tab="results" class="${ctxActiveTab === 'results' ? 'active' : ''}" style="padding:2px 8px;border-radius:5px;${ctxActiveTab === 'results' ? 'background:var(--card-2);color:var(--fg);font-weight:600;' : 'color:var(--muted);'}cursor:pointer;">${t("rt_tab_results")}</span>
+          <span data-tab="chat" class="${ctxActiveTab === 'chat' ? 'active' : ''}" style="padding:2px 8px;border-radius:5px;${ctxActiveTab === 'chat' ? 'background:var(--card-2);color:var(--fg);font-weight:600;' : 'color:var(--muted);'}cursor:pointer;">${t("rt_tab_chat")}</span>
         </div>
       </div>
       <div class="ctx-rows" style="display:grid;gap:6px;max-height:220px;overflow-y:auto;">
-        ${allItems.slice(0, 10).map(it => `
+        ${displayItems.map(it => `
           <div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0;">
             <i class="dot k-${it.kind}"></i>
             <b style="font-weight:500;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%;">${escHtml(it.name || "item")}</b>
@@ -5190,7 +6078,11 @@ function renderMagpieRouting(data) {
           </div>
         `).join("")}
       </div>
-      ${allItems.length > 10 ? `<div style="margin-top:8px;font-size:11px;color:var(--muted);text-align:left;cursor:pointer;">${t("rt_show_all", { n: allItems.length })}</div>` : ""}
+      ${filteredItems.length > 10 ? `
+        <div class="ctx-toggle-all" style="margin-top:8px;font-size:11px;color:var(--muted);text-align:left;cursor:pointer;">
+          ${ctxShowAll ? t("rt_show_fewer") : t("rt_show_all", { n: filteredItems.length })}
+        </div>
+      ` : ""}
       <div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--line);display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--muted);">
         <span>${escHtml(curRoute.agent || "Pi")} &gt; magpie-${escHtml(curRoute.id || "")} &gt; #${curRoute.conv || "1792153438952"}</span>
         <span>${t("rt_session_summary", { turns: 1, reqs: routes.length })}</span>
@@ -5199,14 +6091,35 @@ function renderMagpieRouting(data) {
   `;
   box.appendChild(ctxCard);
 
+  const btnShowTools = ctxCard.querySelector("#btn-show-tools-modal");
+  if (btnShowTools) {
+    btnShowTools.onclick = () => showRoutingToolsModal(curRoute);
+  }
+
+  ctxCard.querySelectorAll(".ctx-tabs span").forEach(sp => {
+    sp.onclick = () => {
+      ctxActiveTab = sp.dataset.tab || "all";
+      renderMagpieRouting(curMagpieRoutingData);
+    };
+  });
+  const btnToggleAll = ctxCard.querySelector(".ctx-toggle-all");
+  if (btnToggleAll) {
+    btnToggleAll.onclick = () => {
+      ctxShowAll = !ctxShowAll;
+      renderMagpieRouting(curMagpieRoutingData);
+    };
+  }
+
   // 2. Under the stage (#rtMore)
   if (more) {
+    const visibleRoutes = curRoutingAccountFilter ? routes.filter(r => (r.who || r.id || r.provider) === curRoutingAccountFilter) : routes;
+
     more.innerHTML = `
       <div class="rt-cols">
         <div class="rt-col">
           <div class="row-head">
             <span class="label">${t("rt_stat_requests")}</span>
-            <span class="note">${t("rt_reqs_note", { n: routes.length })}</span>
+            <span class="note">${t("rt_reqs_note", { n: visibleRoutes.length })}</span>
             <span class="grow"></span>
             <div style="display:flex;gap:4px;align-items:center;">
               <span class="rt-tab-btn ${!curRoutingPicked ? 'on' : ''}" id="rt-tab-live">${t("rt_tab_live")}</span>
@@ -5214,6 +6127,12 @@ function renderMagpieRouting(data) {
               <span class="rt-tab-btn">${t("rt_tab_by_req")}</span>
             </div>
           </div>
+          ${curRoutingAccountFilter ? `
+            <div class="rt-filter-bar">
+              <span>${t("rt_filter_account", { who: `<span class="pii">${escHtml(curRoutingAccountFilter)}</span>` })}</span>
+              <button type="button" class="btn-rt-clear-filter" id="btn-rt-clear-acct">${t("rt_clear_filter")}</button>
+            </div>
+          ` : ""}
           <div class="list rt-reqs" id="rt-reqs-list"></div>
         </div>
         <div class="rt-col">
@@ -5228,8 +6147,16 @@ function renderMagpieRouting(data) {
         <div class="row-head">
           <span class="label">${t("rt_groups_title")}</span>
           <span class="note">${t("rt_groups_note")}</span>
+          <span class="grow"></span>
+          <button type="button" class="text" id="btn-new-routing-group">＋ ${t("rt_new_group")}</button>
         </div>
         <div class="list rt-groups" id="rt-groups-list"></div>
+
+        <div class="row-head" style="margin-top:16px;">
+          <span class="label">${t("rt_pools_title")}</span>
+          <span class="note">${t("rt_pools_note")}</span>
+        </div>
+        <div class="list rt-pools" id="rt-pools-list"></div>
       </div>
     `;
 
@@ -5240,11 +6167,42 @@ function renderMagpieRouting(data) {
         renderMagpieRouting(curMagpieRoutingData);
       };
     }
+    const btnClearAcct = $("btn-rt-clear-acct");
+    if (btnClearAcct) {
+      btnClearAcct.onclick = () => {
+        curRoutingAccountFilter = null;
+        renderMagpieRouting(curMagpieRoutingData);
+      };
+    }
+
+    const btnNewG = $("btn-new-routing-group");
+    if (btnNewG) {
+      btnNewG.onclick = () => {
+        if (curRoutingGroupEdit && curRoutingGroupEdit.id === "") {
+          curRoutingGroupEdit = null;
+        } else {
+          curRoutingGroupEdit = {
+            id: "",
+            draft: {
+              name: "",
+              id: "",
+              members: ["codex/gpt-6-luna", "deepseek/deepseek-flash"],
+              routing: "",
+              affinity: "",
+              effort: "",
+              rules: [{ use: "codex/gpt-6-luna", tokens: 0, images: false, effort: "", agents: [], intent: "" }],
+              classifier: ""
+            }
+          };
+        }
+        renderMagpieRouting(curMagpieRoutingData);
+      };
+    }
 
     // Populate requests list
     const reqsListEl = $("rt-reqs-list");
     if (reqsListEl) {
-      reqsListEl.innerHTML = routes.map((r, i) => {
+      reqsListEl.innerHTML = visibleRoutes.map((r, i) => {
         const isPick = curRoute.id === r.id;
         const ag = r.agent || "pi";
         const timeStr = rtClock(r.time) || "23:53:14";
@@ -5274,8 +6232,8 @@ function renderMagpieRouting(data) {
       reqsListEl.querySelectorAll(".rt-req").forEach(row => {
         row.onclick = () => {
           const idx = parseInt(row.dataset.idx, 10);
-          if (!isNaN(idx) && routes[idx]) {
-            curRoutingPicked = routes[idx];
+          if (!isNaN(idx) && visibleRoutes[idx]) {
+            curRoutingPicked = visibleRoutes[idx];
             renderMagpieRouting(curMagpieRoutingData);
           }
         };
@@ -5285,6 +6243,20 @@ function renderMagpieRouting(data) {
     // Populate accounts summary
     const actsListEl = $("rt-acts-list");
     if (actsListEl) {
+      const groupedSeats = [];
+      const pMap = new Map();
+      orderList.forEach(w => {
+        const prov = w.name || w.provider || "other";
+        const model = w.model || "";
+        const key = prov + "::" + model;
+        if (!pMap.has(key)) {
+          const g = { prov, model, icon: w.icon || prov, items: [] };
+          pMap.set(key, g);
+          groupedSeats.push(g);
+        }
+        pMap.get(key).items.push(w);
+      });
+
       actsListEl.innerHTML = groupedSeats.map(g => {
         return `
           <div class="rt-prov">
@@ -5309,37 +6281,119 @@ function renderMagpieRouting(data) {
       }).join("");
     }
 
-    // Populate routing groups
+    // Populate routing groups & inline editor
     const groupsListEl = $("rt-groups-list");
     if (groupsListEl) {
-      const gItems = groups.length ? groups : [
-        { name: "default", routing: "smart", members: ["kiro/auto", "workbuddy-ai/deepseek-v4.1-flash", "codex/gpt-6-luna", "deepseek/deepseek-flash"] },
-        { name: "high", routing: "order", members: ["codex/gpt-6-luna", "deepseek/deepseek-flash"] },
-        { name: "free", routing: "smart", members: ["our-free-model/free", "opencode-zen/free"] }
+      const gItems = (data.groups && data.groups.length) ? data.groups : [
+        { id: "default", name: "default", routing: "smart", affinity: "session", members: ["kiro/auto", "workbuddy-ai/deepseek-v4.1-flash", "codex/gpt-6-luna", "deepseek/deepseek-flash"], rules: [{ use: "codex/gpt-6-luna", tokens: 20000, intent: "coding and planning" }] },
+        { id: "high", name: "high", routing: "order", affinity: "", members: ["codex/gpt-6-luna", "deepseek/deepseek-flash"], rules: [{ use: "codex/gpt-6-luna", effort: "high" }] },
+        { id: "free", name: "free", routing: "smart", affinity: "", members: ["our-free-model/free", "opencode-zen/free"], rules: [] }
       ];
-      groupsListEl.innerHTML = gItems.map(g => `
-        <div class="rt-group">
-          <div class="main">
+
+      const availableModels = (data.models && data.models.length) ? data.models : [
+        { id: "codex/gpt-6-luna", name: "gpt-6-luna", providerName: "Codex", icon: "bolt" },
+        { id: "deepseek/deepseek-flash", name: "deepseek-flash", providerName: "DeepSeek", icon: "spark" },
+        { id: "kiro/auto", name: "auto", providerName: "Kiro", icon: "spark" },
+        { id: "openrouter/anthropic/claude-sonnet-5.5", name: "claude-sonnet-5.5", providerName: "OpenRouter", icon: "network" },
+        { id: "workbuddy-ai/deepseek-v4.1-flash", name: "deepseek-v4.1-flash", providerName: "WorkBuddy AI", icon: "cpu" },
+        { id: "our-free-model/free", name: "free", providerName: "Our Free Model", icon: "box" }
+      ];
+
+      const availableDeciders = (data.deciders && data.deciders.length) ? data.deciders : [
+        { id: "opencode-zen/jev-1.13-free", name: "jev-1.13-free", providerName: "OpenCode Zen" }
+      ];
+
+      const rowsHtml = [];
+      if (curRoutingGroupEdit && curRoutingGroupEdit.id === "") {
+        rowsHtml.push(renderGroupEditorHtml(null, curRoutingGroupEdit.draft, availableModels, availableDeciders));
+      }
+
+      for (const g of gItems) {
+        const gid = g.id || g.name;
+        if (curRoutingGroupEdit && curRoutingGroupEdit.id === gid) {
+          rowsHtml.push(renderGroupEditorHtml(g, curRoutingGroupEdit.draft, availableModels, availableDeciders));
+        } else {
+          rowsHtml.push(renderGroupRowHtml(g, (curRoutingGroupFilter === gid) || (!curRoutingGroupFilter && gid === (group.name || "default"))));
+        }
+      }
+
+      groupsListEl.innerHTML = rowsHtml.join("");
+      bindGroupEvents(groupsListEl, gItems, availableModels, availableDeciders);
+    }
+
+    // Populate Accounts and Keys Pools
+    const poolsContainer = $("rt-pools-list");
+    if (poolsContainer) {
+      const pools = (data.pools && data.pools.length) ? data.pools : [
+        { provider: "workbuddy-ai", name: "WorkBuddy AI", icon: "cpu", kind: "account", who: ["bengkang0@gmail.com", "carby0716@gmail.com", "iamcheyan@gmail.com", "liukeke365@gmail.com", "tetsuya.ueno.jp@gmail.com", "uenotetsuyta@gmail.com"], routing: "usage", affinity: "" },
+        { provider: "kiro", name: "Kiro", icon: "spark", kind: "account", who: ["carby0716@gmail.com", "iamcheyan@gmail.com", "tetsuya.ueno.jp@gmail.com", "tetsuya.ueno@outlook.com"], routing: "", affinity: "" },
+        { provider: "workbuddy", name: "WorkBuddy", icon: "cpu", kind: "account", who: ["wb-account-1", "wb-account-2"], routing: "", affinity: "" },
+        { provider: "qoder", name: "Qoder", icon: "bolt", kind: "account", who: ["carby0716@gmail.com", "liukeke365@gmail.com", "uenotetsuyta@gmail.com"], routing: "", affinity: "" }
+      ];
+
+      poolsContainer.innerHTML = pools.map(p => {
+        const whoList = p.who || [];
+        const countStr = p.kind === "account" ? `${whoList.length} accounts` : `${whoList.length} keys`;
+        const pRouting = p.routing || "";
+        const pAffinity = p.affinity || "";
+
+        return `
+          <div class="rt-pool" data-prov="${escAttr(p.provider)}">
             <div class="nm">
-              <b>${escHtml(g.name || "default")}</b>
-              <code class="mdl">group/${escHtml(g.name || "default")}</code>
-              <small class="auto" style="margin-left:auto;">${escHtml(modesMap[g.routing || ""]?.[0] || t("rt_mode_smart"))}</small>
+              <span class="ic">${renderProviderIcon(p.icon || p.provider, p.name[0])}</span>
+              <b>${escHtml(p.name)}</b>
+              <span>${countStr}</span>
             </div>
-            <div class="mem">${escHtml((g.members || []).join(" · "))}</div>
+            <div class="ctl">
+              <span class="lab">
+                <small>${t("rt_routing_lbl")}</small>
+                <div class="segs pool-routing-segs" data-prov="${escAttr(p.provider)}">
+                  ${ROUTE_OPTS.map(([k, lbl]) => `
+                    <span class="opt ${pRouting === k ? 'on' : ''}" data-val="${k}">${escHtml(t(modesMap[k]?.[0] || lbl))}</span>
+                  `).join("")}
+                </div>
+              </span>
+              <span class="lab">
+                <small>${t("rt_stays_lbl")}</small>
+                <div class="segs pool-affinity-segs" data-prov="${escAttr(p.provider)}">
+                  ${AFF_OPTS.map(([k, lbl]) => `
+                    <span class="opt ${pAffinity === k ? 'on' : ''}" data-val="${k}">${escHtml(lbl)}</span>
+                  `).join("")}
+                </div>
+              </span>
+            </div>
           </div>
-        </div>
-      `).join("");
+        `;
+      }).join("");
+
+      poolsContainer.querySelectorAll(".pool-routing-segs .opt").forEach(opt => {
+        opt.onclick = () => {
+          const prov = opt.closest(".segs").dataset.prov;
+          const val = opt.dataset.val;
+          const p = pools.find(x => x.provider === prov);
+          if (p) {
+            p.routing = val;
+            renderMagpieRouting(curMagpieRoutingData);
+          }
+        };
+      });
+
+      poolsContainer.querySelectorAll(".pool-affinity-segs .opt").forEach(opt => {
+        opt.onclick = () => {
+          const prov = opt.closest(".segs").dataset.prov;
+          const val = opt.dataset.val;
+          const p = pools.find(x => x.provider === prov);
+          if (p) {
+            p.affinity = val;
+            renderMagpieRouting(curMagpieRoutingData);
+          }
+        };
+      });
     }
   }
 
   requestAnimationFrame(() => {
     layoutRoutingWires();
-    // 列表限高内滚: 滚动态更新底部渐隐(首次渲染后先按初始位置算一次)
-    const accts = box.querySelector(".rt-accts");
-    if (accts) {
-      accts.addEventListener("scroll", () => rtAcctsFade(accts), { passive: true });
-      rtAcctsFade(accts);
-    }
   });
 
   if (!routingResizeObs && window.ResizeObserver) {
@@ -5487,9 +6541,9 @@ function renderMagpieProviders(data) {
 
     let subText = "";
     if (user) {
-      subText = t("mp_signed_in_as", { user }) + " · " + modelsText;
+      subText = t("mp_signed_in_as", { user: `<span class="pii">${escHtml(user)}</span>` }) + " · " + modelsText;
     } else if (pv.host) {
-      subText = pv.host + " · " + modelsText;
+      subText = `<span class="pii">${escHtml(pv.host)}</span> · ` + modelsText;
     } else {
       subText = modelsText;
     }
@@ -5507,8 +6561,9 @@ function renderMagpieProviders(data) {
       } else {
         statusLabel = t("mp_signed_in");
       }
-    } else if (pv.keyList && pv.keyList.length > 0) {
-      statusLabel = pv.keyList[0].masked || "••••••";
+    } else if ((pv.keyList && pv.keyList.length > 0) || (pv.key && pv.key.masked)) {
+      const kObj = (pv.keyList && pv.keyList.length > 0) ? pv.keyList[0] : pv.key;
+      statusLabel = kObj.masked || "••••••";
       isMonoKey = true;
     } else if (pv.id === "grok") {
       statusLabel = "SuperGrok";
@@ -5527,6 +6582,8 @@ function renderMagpieProviders(data) {
       `;
     }).join("");
 
+    const displayKeyLabel = (BOOT.static && isMonoKey) ? "••••••" : statusLabel;
+
     return `
       <div class="mp-pv-row ${isOff ? 'off' : ''}">
         <div class="mp-pv-icon-wrap">
@@ -5534,13 +6591,13 @@ function renderMagpieProviders(data) {
         </div>
         <div class="mp-pv-who">
           <div class="mp-pv-name">${escHtml(pv.name || pv.id)}</div>
-          <div class="mp-pv-sub">${escHtml(subText)}</div>
+          <div class="mp-pv-sub">${subText}</div>
         </div>
         <div class="mp-pv-right">
           ${usesHtml ? `<div class="mp-pv-uses">${usesHtml}</div>` : ""}
           <div class="mp-pv-status-pill ${isMonoKey ? 'mono' : ''}">
             <span class="mp-pv-status-dot ${isOff ? 'off' : ''}"></span>
-            <span title="${escAttr(statusLabel)}">${escHtml(statusLabel)}</span>
+            <span class="${isMonoKey ? 'pii is-masked' : ''}" title="${escAttr(displayKeyLabel)}">${escHtml(displayKeyLabel)}</span>
           </div>
         </div>
       </div>
@@ -5670,15 +6727,9 @@ function bindAgentSubnav() {
   const btnMask = $("mp-btn-mask");
   if (btnMask && !btnMask.dataset.bound) {
     btnMask.dataset.bound = "1";
-    btnMask.classList.toggle("active", curAccountMasked);
+    btnMask.classList.toggle("active", routingMaskAccounts);
     btnMask.addEventListener("click", () => {
-      curAccountMasked = !curAccountMasked;
-      btnMask.classList.toggle("active", curAccountMasked);
-      const lbl = $("mp-mask-label");
-      if (lbl) lbl.textContent = curAccountMasked ? t("mp_mask_toggle") : t("mp_show_accounts");
-      document.querySelectorAll(".mp-acc-email").forEach(el => {
-        el.classList.toggle("is-masked", curAccountMasked);
-      });
+      setGlobalAccountsMask(!routingMaskAccounts);
     });
   }
 
@@ -7177,7 +8228,7 @@ const CATS = [
   ["agent", "tab_agent"], ["svc", "tab_svc"],
 ];
 const CAT_SELS = {
-  home: ["#sysbar", "#chart-wrap", "#hp-portal-grid", "#toolchips"],
+  home: ["#sysbar", "#chart-wrap", "#hp-vms-grid", "#hp-portal-grid", "#toolchips"],
   activity: ["#activity-page"],
   tmux: ["#tmux-panel"],
   goal: ["#tmux-panel"],
@@ -7279,7 +8330,7 @@ window.addEventListener("hashchange", () => {   // 手改 hash/后退也跟随
 // --- 静态快照: 所有脱敏占位符打马赛克(只读, 不可取消) ---
 // BOOT.redactRe 由服务端按语言生成(privacy.redact_marker_re), 覆盖全部占位文案
 // BOOT.redactRe 由服务端按语言生成, 覆盖全部脱敏占位符; 兜底正则兜住发布器后处理产生的标记
-const FALLBACK_REDACT_RE = "\\[[^\\[\\n]{0,60}?(?:已脱敏|已隐藏|已屏蔽|非公開|redacted|hidden)\\]|\\b[A-Za-z0-9]{1,4}\\*{3}[A-Za-z0-9]{0,3}|\\*{3}REDACTED\\*{3}";
+const FALLBACK_REDACT_RE = "\\[[^\\[\\n]{0,60}?(?:\\u5df2\\u8131\\u654f|\\u5df2\\u9690\\u85cf|\\u5df2\\u5c4f\\u853d|\\u975e\\u516c\\u958b|redacted|hidden)\\]|\\b[A-Za-z0-9]{1,4}\\*{3}[A-Za-z0-9]{0,3}|\\*{3}REDACTED\\*{3}";
 let _redactRe = null;
 if (BOOT.static && BOOT.redactRe) {
   try { _redactRe = new RegExp(BOOT.redactRe, "g"); } catch (e) { _redactRe = null; }
@@ -7337,14 +8388,16 @@ function schedStaticRedaction() {
   clearTimeout(_redactTimer);
   _redactTimer = setTimeout(() => applyStaticRedaction(document.body), 150);
 }
-if (BOOT.static && _redactRe) {
-  // 静态页移除「隐藏账号」切换: 路由图账号默认打码且不可取消
-  const _maskBtn = $("rtMask");
-  if (_maskBtn) _maskBtn.remove();
-  schedStaticRedaction();
-  new MutationObserver(schedStaticRedaction).observe(document.body, {
-    childList: true, subtree: true, characterData: true
-  });
+if (BOOT.static) {
+  document.body.classList.add("is-static", "masking");
+  $("rtMask")?.remove();
+  $("mp-btn-mask")?.remove();
+  if (_redactRe) {
+    schedStaticRedaction();
+    new MutationObserver(schedStaticRedaction).observe(document.body, {
+      childList: true, subtree: true, characterData: true
+    });
+  }
 }
 
 // --- 启动 ---

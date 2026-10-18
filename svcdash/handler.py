@@ -361,6 +361,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/magpie/providers":
             from . import magpie
             self._send_json(200, magpie.get_magpie_providers())
+        elif path == "/api/vms":
+            from . import pve
+            self._send_json(200, pve.get_pve_vms())
         else:
             self.send_error(404)
 
