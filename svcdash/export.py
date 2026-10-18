@@ -141,15 +141,25 @@ def _collect_static_snapshot(lang=DEFAULT_LANG):
         clean_magpie_routing = {lg: {} for lg in LANG_KEYS}
         clean_magpie_providers = {lg: {} for lg in LANG_KEYS}
 
-    # PVE 虚拟机数据收集 (Windows11 / DEBIAN 等)
+    # PVE 虚拟机数据与详情收集 (Windows11 / DEBIAN 等)
     clean_vms = {}
+    clean_vms_detail = {}
     try:
-        from svcdash.pve import get_pve_vms, sanitize_pve_vms_for_public
+        from svcdash.pve import (
+            get_pve_vms, sanitize_pve_vms_for_public,
+            get_pve_vm_detail, sanitize_pve_vm_detail_for_public
+        )
         raw_vms = get_pve_vms(force=True)
         clean_vms = {lg: sanitize_pve_vms_for_public(raw_vms, lg) for lg in LANG_KEYS}
+        for v in (raw_vms.get("vms") or []):
+            vid = str(v.get("vmid"))
+            dt = get_pve_vm_detail(vid, force=True)
+            for lg in LANG_KEYS:
+                clean_vms_detail.setdefault(lg, {})[vid] = sanitize_pve_vm_detail_for_public(dt, lg)
     except Exception as e:
         print(f"[!] 采集 PVE 虚拟机数据异常: {e}")
         clean_vms = {lg: {"ok": False, "vms": []} for lg in LANG_KEYS}
+        clean_vms_detail = {lg: {} for lg in LANG_KEYS}
 
     return {
         "now": now, "clean_services": clean_services, "sysdata": sysdata,
@@ -160,6 +170,7 @@ def _collect_static_snapshot(lang=DEFAULT_LANG):
         "clean_magpie_routing": clean_magpie_routing,
         "clean_magpie_providers": clean_magpie_providers,
         "clean_vms": clean_vms,
+        "clean_vms_detail": clean_vms_detail,
     }
 
 
@@ -240,6 +251,7 @@ def gather_static_payload(lang=DEFAULT_LANG, snapshot=None):
         "magpieRouting": (snapshot.get("clean_magpie_routing") or {}).get(lang, {}),
         "magpieProviders": (snapshot.get("clean_magpie_providers") or {}).get(lang, {}),
         "vmsData": (snapshot.get("clean_vms") or {}).get(lang, {}),
+        "vmsDetail": (snapshot.get("clean_vms_detail") or {}).get(lang, {}),
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
     }
 

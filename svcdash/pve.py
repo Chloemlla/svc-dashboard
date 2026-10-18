@@ -244,3 +244,201 @@ def sanitize_pve_vms_for_public(vms_data: dict, lang: str = "zh") -> dict:
         cv["pve_url"] = "https://127.0.0.1:8006/"
         clean["vms"].append(cv)
     return clean
+
+
+_detail_cache = {}  # vmid -> (timestamp, data)
+
+
+def get_pve_vm_detail(vmid, force=False):
+    """获取单台虚拟机的完整详细配置、RRD 性能趋势图表数据、硬件清单、快照与任务历史。"""
+    global _detail_cache
+    vmid = str(vmid)
+    now = time.time()
+    with _cache_lock:
+        if not force and vmid in _detail_cache:
+            ts, val = _detail_cache[vmid]
+            if now - ts < 15:
+                return val
+
+    try:
+        node = PVE_NODE
+        status = _pve_request(f"/api2/json/nodes/{node}/qemu/{vmid}/status/current") or {}
+        config = _pve_request(f"/api2/json/nodes/{node}/qemu/{vmid}/config") or {}
+        rrd = _pve_request(f"/api2/json/nodes/{node}/qemu/{vmid}/rrddata?timeframe=hour") or []
+        snaps = _pve_request(f"/api2/json/nodes/{node}/qemu/{vmid}/snapshot") or []
+        tasks = _pve_request(f"/api2/json/nodes/{node}/tasks?vmid={vmid}") or []
+
+        # 整理硬件设备 (磁盘、光驱、网卡、固件)
+        disks = []
+        nics = []
+        for k in sorted(config.keys()):
+            v = str(config[k])
+            if any(k.startswith(p) for p in ("scsi", "sata", "virtio", "ide", "efidisk", "tpmstate")):
+                disks.append({"key": k, "value": v})
+            elif k.startswith("net"):
+                nics.append({"key": k, "value": v})
+
+        # 整理 RRD 曲线点 (最多 60 点，保留时间戳与关键指标)
+        rrd_points = []
+        for p in rrd:
+            if p.get("time"):
+                rrd_points.append({
+                    "time": p["time"],
+                    "cpu": round((p.get("cpu") or 0.0) * 100, 2),
+                    "mem": p.get("mem") or 0,
+                    "maxmem": p.get("maxmem") or 0,
+                    "memhost": p.get("memhost") or 0,
+                    "netin": round(p.get("netin") or 0.0, 1),
+                    "netout": round(p.get("netout") or 0.0, 1),
+                    "diskread": round(p.get("diskread") or 0.0, 1),
+                    "diskwrite": round(p.get("diskwrite") or 0.0, 1),
+                })
+
+        # 整理快照
+        clean_snaps = []
+        for s in snaps:
+            clean_snaps.append({
+                "name": s.get("name") or "",
+                "description": s.get("description") or "",
+                "snaptime": s.get("snaptime") or 0,
+                "vmstate": bool(s.get("vmstate")),
+                "running": bool(s.get("running")),
+            })
+
+        # 整理最近 20 条任务历史
+        clean_tasks = []
+        for t in tasks[:20]:
+            clean_tasks.append({
+                "type": t.get("type") or "",
+                "status": t.get("status") or "OK",
+                "user": t.get("user") or "",
+                "starttime": t.get("starttime") or 0,
+                "endtime": t.get("endtime") or 0,
+            })
+
+        # 提取 Guest Agent IP
+        ips = []
+        has_agent = False
+        if status.get("status") == "running":
+            try:
+                net_info = _pve_request(f"/api2/json/nodes/{node}/qemu/{vmid}/agent/network-get-interfaces")
+                if isinstance(net_info, dict) and "result" in net_info:
+                    has_agent = True
+                    for iface in net_info["result"]:
+                        if iface.get("name") == "lo":
+                            continue
+                        for addr in iface.get("ip-addresses", []):
+                            ip = addr.get("ip-address")
+                            if ip and not ip.startswith("127.") and not ip.startswith("fe80::"):
+                                if not ip.startswith("172.17.") and not ip.startswith("172.18.") and not ip.startswith("172.19.") and not ip.startswith("172.20.") and not ip.startswith("172.21."):
+                                    ips.append(ip)
+            except Exception:
+                pass
+
+        if not ips:
+            tags = config.get("tags") or status.get("tags") or ""
+            if tags:
+                tag_ips = [t.strip() for t in tags.split(",") if re.match(r"^\d{1,3}(?:\.\d{1,3}){3}$", t.strip())]
+                ips.extend(tag_ips)
+
+        data = {
+            "ok": True,
+            "vmid": vmid,
+            "name": config.get("name") or status.get("name") or f"VM-{vmid}",
+            "status": status.get("status") or "stopped",
+            "uptime": status.get("uptime") or 0,
+            "uptime_str": _fmt_uptime(status.get("uptime") or 0),
+            "node": node,
+            "ha": "none" if not status.get("ha", {}).get("managed") else "managed",
+            "cpus": status.get("cpus") or config.get("cores") or 1,
+            "cpu_usage": round((status.get("cpu") or 0.0) * 100, 2),
+            "mem_used": status.get("mem") or 0,
+            "mem_total": status.get("maxmem") or (int(config.get("memory", 0)) * 1024 * 1024),
+            "mem_host": status.get("memhost") or 0,
+            "boot_disk": status.get("maxdisk") or 0,
+            "ips": ips,
+            "has_guest_agent": has_agent,
+            "pve_url": f"{PVE_URL}/#v1:0:=qemu%2F{vmid}:4:=notes::::::=notes",
+            "hardware": {
+                "cores": config.get("cores") or status.get("cpus") or 1,
+                "sockets": config.get("sockets") or 1,
+                "cpu_type": config.get("cpu") or "kvm64",
+                "memory_mb": config.get("memory") or 0,
+                "balloon": config.get("balloon"),
+                "bios": config.get("bios") or "seabios",
+                "machine": config.get("machine") or "pc",
+                "disks": disks,
+                "nics": nics,
+            },
+            "options": {
+                "onboot": bool(config.get("onboot")),
+                "boot_order": config.get("boot") or "",
+                "ostype": config.get("ostype") or "other",
+                "agent": config.get("agent") or "",
+            },
+            "rrd": rrd_points,
+            "snapshots": clean_snaps,
+            "tasks": clean_tasks,
+            "updated": now,
+        }
+
+        with _cache_lock:
+            _detail_cache[vmid] = (now, data)
+        return data
+
+    except Exception as e:
+        with _cache_lock:
+            if vmid in _detail_cache:
+                old = dict(_detail_cache[vmid][1])
+                old["stale"] = True
+                return old
+        return {
+            "ok": False,
+            "error": str(e),
+            "vmid": vmid,
+            "updated": now,
+        }
+
+
+def sanitize_pve_vm_detail_for_public(detail: dict, lang: str = "zh") -> dict:
+    """脱敏公开静态快照中的虚拟机详情。
+    隐藏内网私有真实主机 IP 与网卡 MAC 地址，保留指标趋势曲线、硬件规格、快照与任务概要。
+    """
+    clean = dict(detail)
+    clean["pve_url"] = "https://127.0.0.1:8006/"
+
+    # 脱敏 IP
+    ips = []
+    for ip in detail.get("ips", []):
+        if ":" in ip:
+            parts = ip.split(":")
+            ips.append(f"{parts[0]}:****::*")
+        else:
+            parts = ip.split(".")
+            if len(parts) == 4:
+                ips.append(f"{parts[0]}.{parts[1]}.{parts[2]}.*")
+            else:
+                ips.append("127.0.0.1")
+    clean["ips"] = ips
+
+    # 脱敏硬件里的 MAC 地址
+    hw = dict(detail.get("hardware") or {})
+    clean_nics = []
+    for nic in hw.get("nics", []):
+        val = nic.get("value", "")
+        # virtio=BC:24:11:60:6D:9C,... -> virtio=BC:24:11:*:*:*,...
+        val = re.sub(r"([0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}):[0-9A-Fa-f:]+", r"\1:*:*:*", val)
+        clean_nics.append({"key": nic.get("key"), "value": val})
+    hw["nics"] = clean_nics
+    clean["hardware"] = hw
+
+    # 脱敏任务用户
+    clean_tasks = []
+    for t in detail.get("tasks", []):
+        ct = dict(t)
+        if ct.get("user"):
+            ct["user"] = "root"
+        clean_tasks.append(ct)
+    clean["tasks"] = clean_tasks
+
+    return clean

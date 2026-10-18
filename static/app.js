@@ -1257,6 +1257,7 @@ async function load(alsoSys) {
       if (alsoSys) {
         const ss = snapGet("sys");
         if (ss && ss.data) { try { renderSys(ss.data); } catch (e) {} }
+        loadVms(true);
         try {
           const r = await fetch("/api/sys", { cache: "no-store" });
           const d = await r.json();
@@ -1265,7 +1266,6 @@ async function load(alsoSys) {
         } catch (err) {
           console.error("sys refresh failed", err);
         }
-        loadVms(true);
       }
     } finally {
       btns.forEach(b => { b.classList.remove("spinning"); b.setAttribute("aria-disabled", "false"); });
@@ -1660,6 +1660,28 @@ async function loadVms(force) {
   }
 }
 
+function fmtGib(b) {
+  if (!b || b <= 0) return "0 B";
+  const gib = b / 1073741824;
+  if (gib >= 1) return gib.toFixed(2) + " GiB";
+  const mib = b / 1048576;
+  if (mib >= 1) return mib.toFixed(2) + " MiB";
+  return b + " B";
+}
+
+function fmtUptimeLang(sec) {
+  if (!sec || sec <= 0) return "";
+  const days = Math.floor(sec / 86400);
+  const rem = sec % 86400;
+  const hours = String(Math.floor(rem / 3600)).padStart(2, "0");
+  const mins = String(Math.floor((rem % 3600) / 60)).padStart(2, "0");
+  const secs = String(rem % 60).padStart(2, "0");
+  if (days > 0) {
+    return t("vm_uptime_days", { d: days, h: hours, m: mins, s: secs });
+  }
+  return `${hours}:${mins}:${secs}`;
+}
+
 function renderVms(d) {
   const el = $("hp-vms-grid");
   if (!el) return;
@@ -1670,28 +1692,6 @@ function renderVms(d) {
     }
     return;
   }
-
-  const fmtGib = (b) => {
-    if (!b || b <= 0) return "0 B";
-    const gib = b / 1073741824;
-    if (gib >= 1) return gib.toFixed(2) + " GiB";
-    const mib = b / 1048576;
-    if (mib >= 1) return mib.toFixed(2) + " MiB";
-    return b + " B";
-  };
-
-  const fmtUptimeLang = (sec) => {
-    if (!sec || sec <= 0) return "";
-    const days = Math.floor(sec / 86400);
-    const rem = sec % 86400;
-    const hours = String(Math.floor(rem / 3600)).padStart(2, "0");
-    const mins = String(Math.floor((rem % 3600) / 60)).padStart(2, "0");
-    const secs = String(rem % 60).padStart(2, "0");
-    if (days > 0) {
-      return t("vm_uptime_days", { d: days, h: hours, m: mins, s: secs });
-    }
-    return `${hours}:${mins}:${secs}`;
-  };
 
   el.innerHTML = list.map(v => {
     const isRun = v.status === "running";
@@ -1719,7 +1719,7 @@ function renderVms(d) {
 
     const pveLink = linkHost(v.pve_url || "https://192.168.3.10:8006");
 
-    return `<div class="gpanel hp-vm-card" id="hp-vm-${escAttr(v.vmid)}">
+    return `<div class="gpanel hp-vm-card" id="hp-vm-${escAttr(v.vmid)}" data-vmid="${escAttr(v.vmid)}" role="button" tabindex="0">
       <div class="hp-vm-head">
         <div class="hp-vm-title-wrap">
           <span class="hp-vm-ico ${isRun ? "running" : "stopped"}">${icon("server", 15)}</span>
@@ -1730,9 +1730,9 @@ function renderVms(d) {
           <span class="hp-vm-status-badge ${isRun ? "running" : "stopped"}">
             ${icon("dot", 8)} ${isRun ? "running" : "stopped"}
           </span>
-          <a class="hp-vm-link" href="${escAttr(pveLink)}" target="_blank" rel="noopener" title="${escAttr(t("vm_pve_console"))}">
-            ${icon("ext", 12)}
-          </a>
+          <span class="hp-vm-link" data-openvm="${escAttr(v.vmid)}" title="${escAttr(t("vmd_title"))}">
+            ${escHtml(t("al_detail"))} ${icon("chev", 11)}
+          </span>
         </div>
       </div>
       <div class="hp-vm-rows">
@@ -1793,6 +1793,432 @@ function renderVms(d) {
       </div>
     </div>`;
   }).join("");
+}
+
+// --- PVE 虚拟机详情全屏浮层 (VM Details Sheet) ---
+let curVmDetailId = null;
+let curVmTab = "summary";
+let vmDetailCache = {};
+
+function makeVmAreaChart(points, valKey, color, gradId, maxScale, isBytes) {
+  if (!points || !points.length) {
+    return `<div class="gempty" style="height:120px;display:flex;align-items:center;justify-content:center;">${escHtml(t("es_sub"))}</div>`;
+  }
+  const vals = points.map(p => Number(p[valKey]) || 0);
+  const maxV = Math.max(...vals, maxScale || 1);
+  const W = 500, H = 130, padTop = 15, padBottom = 22, padLeft = 45, padRight = 12;
+  const plotW = W - padLeft - padRight;
+  const plotH = H - padTop - padBottom;
+
+  const pts = points.map((p, i) => {
+    const x = padLeft + (i / Math.max(points.length - 1, 1)) * plotW;
+    const v = Number(p[valKey]) || 0;
+    const y = padTop + plotH - (maxV > 0 ? (v / maxV) * plotH : 0);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+
+  const polylinePts = pts.join(" ");
+  const polygonPts = `${padLeft},${H - padBottom} ` + polylinePts + ` ${W - padRight},${H - padBottom}`;
+
+  const fmtTime = (ts) => ts ? new Date(ts * 1000).toTimeString().slice(0, 5) : "";
+  const tStart = fmtTime(points[0].time);
+  const tMid = fmtTime(points[Math.floor(points.length / 2)].time);
+  const tEnd = fmtTime(points[points.length - 1].time);
+
+  const fmtAxis = (v) => {
+    if (isBytes) {
+      if (v >= 1073741824) return (v / 1073741824).toFixed(1) + "G";
+      if (v >= 1048576) return (v / 1048576).toFixed(0) + "M";
+      if (v >= 1024) return (v / 1024).toFixed(0) + "K";
+      return Math.round(v);
+    }
+    return Math.round(v) + (maxScale === 100 ? "%" : "");
+  };
+
+  return `
+    <svg class="vmd-svg-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${color}" stop-opacity="0.45"/>
+          <stop offset="100%" stop-color="${color}" stop-opacity="0.02"/>
+        </linearGradient>
+      </defs>
+      <line x1="${padLeft}" y1="${padTop}" x2="${W - padRight}" y2="${padTop}" stroke="rgba(255,255,255,0.06)" stroke-width="1" />
+      <line x1="${padLeft}" y1="${padTop + plotH / 2}" x2="${W - padRight}" y2="${padTop + plotH / 2}" stroke="rgba(255,255,255,0.06)" stroke-width="1" stroke-dasharray="3,3" />
+      <line x1="${padLeft}" y1="${H - padBottom}" x2="${W - padRight}" y2="${H - padBottom}" stroke="rgba(255,255,255,0.12)" stroke-width="1" />
+
+      <text x="${padLeft - 6}" y="${padTop + 4}" font-size="9" fill="rgba(255,255,255,0.4)" text-anchor="end" font-family="monospace">${fmtAxis(maxV)}</text>
+      <text x="${padLeft - 6}" y="${H - padBottom}" font-size="9" fill="rgba(255,255,255,0.4)" text-anchor="end" font-family="monospace">0</text>
+
+      <polygon fill="url(#${gradId})" points="${polygonPts}" />
+      <polyline fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="${polylinePts}" />
+
+      <text x="${padLeft}" y="${H - 6}" font-size="9" fill="rgba(255,255,255,0.45)" font-family="monospace">${tStart}</text>
+      <text x="${padLeft + plotW / 2}" y="${H - 6}" font-size="9" fill="rgba(255,255,255,0.45)" text-anchor="middle" font-family="monospace">${tMid}</text>
+      <text x="${W - padRight}" y="${H - 6}" font-size="9" fill="rgba(255,255,255,0.45)" text-anchor="end" font-family="monospace">${tEnd}</text>
+    </svg>
+  `;
+}
+
+function renderVmDetailHeader(v) {
+  const isRun = v.status === "running";
+  const title = $("vm-sheet-title");
+  const sub = $("vm-sheet-sub");
+  const badge = $("vm-sheet-badge");
+  const ico = $("vm-sheet-ico");
+  const pveLink = $("vm-sheet-pve-link");
+
+  if (title) title.textContent = v.name || ("VM-" + v.vmid);
+  if (sub) sub.textContent = `${v.node || "pve"} · qemu/${v.vmid}` + (isRun && v.uptime ? ` · ${t("vm_uptime_prefix")}: ${fmtUptimeLang(v.uptime)}` : "");
+  if (badge) {
+    badge.className = "hp-vm-status-badge " + (isRun ? "running" : "stopped");
+    badge.innerHTML = `${icon("dot", 8)} ${isRun ? "running" : "stopped"}`;
+  }
+  if (ico) {
+    ico.className = "hp-vm-ico " + (isRun ? "running" : "stopped");
+  }
+  if (pveLink) {
+    pveLink.href = linkHost(v.pve_url || `https://192.168.3.10:8006/#v1:0:=qemu%2F${v.vmid}:4:=notes::::::=notes`);
+  }
+}
+
+function renderVmDetailTab(d, tab) {
+  const body = $("vm-sheet-body");
+  if (!body) return;
+  const isRun = d.status === "running";
+  const hw = d.hardware || {};
+  const opt = d.options || {};
+  const rrd = d.rrd || [];
+  const latestRrd = rrd.length ? rrd[rrd.length - 1] : {};
+
+  if (tab === "summary") {
+    const cpuChartSvg = makeVmAreaChart(rrd, "cpu", "#38bdf8", "grad-cpu-vmd", 100, false);
+    const memChartSvg = makeVmAreaChart(rrd, "mem", "#22c55e", "grad-mem-vmd", d.mem_total || (hw.memory_mb * 1048576), true);
+
+    const ipsHtml = (d.ips && d.ips.length)
+      ? d.ips.map(ip => `<span class="hp-vm-ip-tag" title="${escAttr(ip)}">${escHtml(ip)}</span>`).join(" ")
+      : `<span style="color:var(--text-muted);">${escHtml(t("vm_no_agent"))}</span>`;
+
+    body.innerHTML = `
+      <div class="vmd-metrics-grid">
+        <div class="vmd-kpi">
+          <span class="vmd-kpi-lbl">${icon("cpu", 13)} ${escHtml(t("vm_cpu"))}</span>
+          <span class="vmd-kpi-val">${Number(d.cpu_usage || 0).toFixed(2)}%</span>
+          <span class="vmd-kpi-sub">${d.cpus || hw.cores || 1} Cores · ${escHtml(hw.cpu_type || "kvm64")}</span>
+        </div>
+        <div class="vmd-kpi">
+          <span class="vmd-kpi-lbl">${icon("mem", 13)} ${escHtml(t("vm_mem"))}</span>
+          <span class="vmd-kpi-val">${fmtGib(d.mem_used)}</span>
+          <span class="vmd-kpi-sub">${fmtGib(d.mem_total)}</span>
+        </div>
+        <div class="vmd-kpi">
+          <span class="vmd-kpi-lbl">${icon("disk", 13)} ${escHtml(t("vm_boot_disk"))}</span>
+          <span class="vmd-kpi-val">${fmtGib(d.boot_disk)}</span>
+          <span class="vmd-kpi-sub">${escHtml(d.node || "pve")}</span>
+        </div>
+        <div class="vmd-kpi">
+          <span class="vmd-kpi-lbl">${icon("network", 13)} ${escHtml(t("vm_ips"))}</span>
+          <div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px;">${ipsHtml}</div>
+        </div>
+      </div>
+
+      <div class="vmd-charts-grid">
+        <div class="vmd-chart-card">
+          <div class="vmd-chart-head">
+            <span class="vmd-chart-title">${icon("cpu", 14)} ${escHtml(t("vmd_chart_cpu"))}</span>
+            <span class="vmd-chart-badge">${Number(d.cpu_usage || 0).toFixed(1)}%</span>
+          </div>
+          <div class="vmd-chart-box">${cpuChartSvg}</div>
+        </div>
+        <div class="vmd-chart-card">
+          <div class="vmd-chart-head">
+            <span class="vmd-chart-title">${icon("mem", 14)} ${escHtml(t("vmd_chart_mem"))}</span>
+            <span class="vmd-chart-badge">${fmtGib(d.mem_used)}</span>
+          </div>
+          <div class="vmd-chart-box">${memChartSvg}</div>
+        </div>
+      </div>
+
+      <div class="vmd-table-card">
+        <h3>${icon("activity", 15)} ${escHtml(t("vmd_chart_io"))}</h3>
+        <div class="vmd-kv-list">
+          <div class="vmd-kv-item">
+            <span class="vmd-kv-k">${escHtml(t("vmd_net_in"))} / ${escHtml(t("vmd_net_out"))}</span>
+            <span class="vmd-kv-v">${fmtGib(latestRrd.netin || 0)}/s · ${fmtGib(latestRrd.netout || 0)}/s</span>
+          </div>
+          <div class="vmd-kv-item">
+            <span class="vmd-kv-k">${escHtml(t("vmd_disk_read"))} / ${escHtml(t("vmd_disk_write"))}</span>
+            <span class="vmd-kv-v">${fmtGib(latestRrd.diskread || 0)}/s · ${fmtGib(latestRrd.diskwrite || 0)}/s</span>
+          </div>
+          <div class="vmd-kv-item">
+            <span class="vmd-kv-k">${escHtml(t("vm_host_mem"))}</span>
+            <span class="vmd-kv-v">${fmtGib(d.mem_host)}</span>
+          </div>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  if (tab === "hardware") {
+    const disksHtml = (hw.disks || []).map(dk => `
+      <div class="vmd-kv-item">
+        <span class="vmd-kv-k" style="font-family:var(--font-mono);font-weight:600;color:#38bdf8;">${escHtml(dk.key)}</span>
+        <span class="vmd-kv-v">${escHtml(dk.value)}</span>
+      </div>
+    `).join("") || `<div class="gempty">${escHtml(t("es_sub"))}</div>`;
+
+    const nicsHtml = (hw.nics || []).map(nc => `
+      <div class="vmd-kv-item">
+        <span class="vmd-kv-k" style="font-family:var(--font-mono);font-weight:600;color:#4ade80;">${escHtml(nc.key)}</span>
+        <span class="vmd-kv-v">${escHtml(nc.value)}</span>
+      </div>
+    `).join("") || `<div class="gempty">${escHtml(t("es_sub"))}</div>`;
+
+    body.innerHTML = `
+      <div class="vmd-table-card">
+        <h3>${icon("cpu", 15)} ${escHtml(t("vmd_hw_processors"))}</h3>
+        <div class="vmd-kv-list">
+          <div class="vmd-kv-item">
+            <span class="vmd-kv-k">Cores</span>
+            <span class="vmd-kv-v">${hw.cores || 1}</span>
+          </div>
+          <div class="vmd-kv-item">
+            <span class="vmd-kv-k">Sockets</span>
+            <span class="vmd-kv-v">${hw.sockets || 1}</span>
+          </div>
+          <div class="vmd-kv-item">
+            <span class="vmd-kv-k">Type</span>
+            <span class="vmd-kv-v">${escHtml(hw.cpu_type || "kvm64")}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="vmd-table-card">
+        <h3>${icon("mem", 15)} ${escHtml(t("vmd_hw_memory"))}</h3>
+        <div class="vmd-kv-list">
+          <div class="vmd-kv-item">
+            <span class="vmd-kv-k">${escHtml(t("vmd_hw_memory"))}</span>
+            <span class="vmd-kv-v">${hw.memory_mb || 0} MB (${fmtGib(d.mem_total)})</span>
+          </div>
+          <div class="vmd-kv-item">
+            <span class="vmd-kv-k">Ballooning</span>
+            <span class="vmd-kv-v">${hw.balloon ? hw.balloon + " MB" : escHtml(t("vm_ha_none"))}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="vmd-table-card">
+        <h3>${icon("disk", 15)} ${escHtml(t("vmd_hw_disks"))}</h3>
+        <div class="vmd-kv-list">${disksHtml}</div>
+      </div>
+
+      <div class="vmd-table-card">
+        <h3>${icon("network", 15)} ${escHtml(t("vmd_hw_network"))}</h3>
+        <div class="vmd-kv-list">${nicsHtml}</div>
+      </div>
+
+      <div class="vmd-table-card">
+        <h3>${icon("server", 15)} ${escHtml(t("vmd_hw_bios"))} & ${escHtml(t("vmd_hw_machine"))}</h3>
+        <div class="vmd-kv-list">
+          <div class="vmd-kv-item">
+            <span class="vmd-kv-k">${escHtml(t("vmd_hw_bios"))}</span>
+            <span class="vmd-kv-v">${escHtml(hw.bios || "seabios")}</span>
+          </div>
+          <div class="vmd-kv-item">
+            <span class="vmd-kv-k">${escHtml(t("vmd_hw_machine"))}</span>
+            <span class="vmd-kv-v">${escHtml(hw.machine || "pc")}</span>
+          </div>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  if (tab === "options") {
+    body.innerHTML = `
+      <div class="vmd-table-card">
+        <h3>${icon("tool", 15)} ${escHtml(t("vmd_tab_options"))}</h3>
+        <div class="vmd-kv-list">
+          <div class="vmd-kv-item">
+            <span class="vmd-kv-k">${escHtml(t("vmd_opt_onboot"))}</span>
+            <span class="vmd-kv-v">${opt.onboot ? `<span style="color:#4ade80;">${icon("ok", 12)} YES</span>` : escHtml(t("vm_ha_none"))}</span>
+          </div>
+          <div class="vmd-kv-item">
+            <span class="vmd-kv-k">${escHtml(t("vmd_opt_bootorder"))}</span>
+            <span class="vmd-kv-v">${escHtml(opt.boot_order || "—")}</span>
+          </div>
+          <div class="vmd-kv-item">
+            <span class="vmd-kv-k">${escHtml(t("vmd_opt_ostype"))}</span>
+            <span class="vmd-kv-v">${escHtml(opt.ostype || "—")}</span>
+          </div>
+          <div class="vmd-kv-item">
+            <span class="vmd-kv-k">${escHtml(t("vmd_opt_agent"))}</span>
+            <span class="vmd-kv-v">${d.has_guest_agent ? `<span style="color:#4ade80;">${icon("ok", 12)} enabled</span>` : escHtml(t("vm_no_agent"))}</span>
+          </div>
+          <div class="vmd-kv-item">
+            <span class="vmd-kv-k">${escHtml(t("vm_ha"))}</span>
+            <span class="vmd-kv-v">${escHtml(d.ha === "none" ? t("vm_ha_none") : d.ha)}</span>
+          </div>
+          <div class="vmd-kv-item">
+            <span class="vmd-kv-k">${escHtml(t("vm_node"))}</span>
+            <span class="vmd-kv-v">${escHtml(d.node || "pve")}</span>
+          </div>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  if (tab === "tasks") {
+    const snaps = d.snapshots || [];
+    const snapsHtml = snaps.length ? snaps.map(s => `
+      <div class="vmd-snap-card">
+        <div class="vmd-snap-info">
+          <span class="vmd-snap-name">${icon("file", 13)} ${escHtml(s.name)}</span>
+          ${s.description ? `<span class="vmd-snap-desc">${escHtml(s.description)}</span>` : ""}
+        </div>
+        <span class="vmd-task-time">${s.snaptime ? escHtml(agoFromTs(s.snaptime)) : "—"}</span>
+      </div>
+    `).join("") : `<div class="gempty">${escHtml(t("vmd_snaps_none"))}</div>`;
+
+    const tasks = d.tasks || [];
+    const tasksHtml = tasks.length ? tasks.map(tk => {
+      const isOk = tk.status === "OK";
+      return `
+        <div class="vmd-task-row">
+          <div class="vmd-task-main">
+            <span class="vmd-task-badge">${escHtml(tk.type)}</span>
+            <span style="color:${isOk ? '#4ade80' : '#ef4444'};font-weight:600;">${escHtml(tk.status)}</span>
+            <span style="color:var(--text-dim);font-size:11px;">by ${escHtml(tk.user)}</span>
+          </div>
+          <span class="vmd-task-time">${tk.starttime ? escHtml(agoFromTs(tk.starttime)) : "—"}</span>
+        </div>
+      `;
+    }).join("") : `<div class="gempty">${escHtml(t("vmd_tasks_none"))}</div>`;
+
+    body.innerHTML = `
+      <div class="vmd-table-card">
+        <h3>${icon("file", 15)} ${escHtml(t("vmd_snaps_title"))}</h3>
+        <div style="display:flex;flex-direction:column;gap:8px;">${snapsHtml}</div>
+      </div>
+
+      <div class="vmd-table-card">
+        <h3>${icon("clock", 15)} ${escHtml(t("vmd_tasks_title"))}</h3>
+        <div style="display:flex;flex-direction:column;gap:6px;">${tasksHtml}</div>
+      </div>
+    `;
+  }
+}
+
+let vmDetailInFlight = null;
+async function openVmDetail(vmid) {
+  const idStr = String(vmid);
+  const sheet = $("vm-detail-sheet");
+  if (!sheet) return;
+
+  sheet.hidden = false;
+  sheet.classList.add("opening");
+  document.documentElement.classList.add("traj-noscroll");
+
+  if (location.hash !== "#vm=" + idStr) {
+    location.hash = "#vm=" + idStr;
+  }
+
+  // Pre-fill from vmsCache if available
+  const vmBasics = (vmsCache.data && vmsCache.data.vms || []).find(v => String(v.vmid) === idStr);
+  if (vmBasics) {
+    renderVmDetailHeader(vmBasics);
+  }
+
+  curVmDetailId = idStr;
+  if (!curVmTab) curVmTab = "summary";
+  document.querySelectorAll("#vm-sheet-nav .chip").forEach(c => {
+    c.classList.toggle("active", c.getAttribute("data-vmtab") === curVmTab);
+  });
+
+  // Check static / cache
+  if (BOOT.static && BOOT.vmsDetail && BOOT.vmsDetail[idStr]) {
+    renderVmDetailHeader(BOOT.vmsDetail[idStr]);
+    renderVmDetailTab(BOOT.vmsDetail[idStr], curVmTab);
+    return;
+  }
+
+  if (vmDetailCache[idStr] && (Date.now() - vmDetailCache[idStr].t < 15000)) {
+    renderVmDetailHeader(vmDetailCache[idStr].data);
+    renderVmDetailTab(vmDetailCache[idStr].data, curVmTab);
+    return;
+  }
+
+  if (vmDetailInFlight === idStr) return;
+  vmDetailInFlight = idStr;
+
+  const body = $("vm-sheet-body");
+  if (body) body.innerHTML = `<div class="gempty">${escHtml(t("st_loading"))}</div>`;
+
+  try {
+    const r = await fetch(`/api/vms/detail?vmid=${encodeURIComponent(idStr)}`, { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const d = await r.json();
+    vmDetailCache[idStr] = { t: Date.now(), data: d };
+    if (curVmDetailId === idStr) {
+      renderVmDetailHeader(d);
+      renderVmDetailTab(d, curVmTab);
+    }
+  } catch (err) {
+    if (body && curVmDetailId === idStr) body.innerHTML = `<div class="gempty">${escHtml(err.message)}</div>`;
+  } finally {
+    if (vmDetailInFlight === idStr) vmDetailInFlight = null;
+  }
+}
+
+function closeVmDetail() {
+  curVmDetailId = null;
+  const sheet = $("vm-detail-sheet");
+  if (sheet) sheet.hidden = true;
+  document.documentElement.classList.remove("traj-noscroll");
+  if (location.hash.startsWith("#vm=")) {
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+}
+
+// 事件监听: VM 卡片点击、详情抽屉关闭与切卡
+$("hp-vms-grid")?.addEventListener("click", (e) => {
+  const card = e.target.closest("[data-vmid]");
+  if (card) {
+    const vmid = card.getAttribute("data-vmid");
+    if (vmid) openVmDetail(vmid);
+  }
+});
+
+$("vm-sheet-back")?.addEventListener("click", closeVmDetail);
+
+$("vm-sheet-nav")?.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-vmtab]");
+  if (!btn) return;
+  const tab = btn.getAttribute("data-vmtab");
+  curVmTab = tab;
+  document.querySelectorAll("#vm-sheet-nav .chip").forEach(c => c.classList.toggle("active", c === btn));
+  let d = null;
+  if (BOOT.static && BOOT.vmsDetail && BOOT.vmsDetail[curVmDetailId]) {
+    d = BOOT.vmsDetail[curVmDetailId];
+  } else if (curVmDetailId && vmDetailCache[curVmDetailId]) {
+    d = vmDetailCache[curVmDetailId].data;
+  }
+  if (d) renderVmDetailTab(d, tab);
+});
+
+window.addEventListener("hashchange", () => {
+  const m = location.hash.match(/^#vm=(\d+)/);
+  if (m) {
+    openVmDetail(m[1]);
+  } else if (curVmDetailId) {
+    closeVmDetail();
+  }
+});
+const initVmM = location.hash.match(/^#vm=(\d+)/);
+if (initVmM) {
+  openVmDetail(initVmM[1]);
 }
 
 let lastSvc = { ok: 0, total: 0 };
@@ -8420,6 +8846,7 @@ initLogAgentPicker();   // 延后到这里: escHtml 等 const 已初始化(避�
 initLanguageMenu();
 setupMagpieLinks();
 load(true);
+loadVms();
 renderConnbar();   // 顶栏连接信息(ssh/IP)随首屏渲染, 不等进工具页
 // AI 清理: 首页面板按钮 + 弹层关闭(独立于工具页惰性初始化, 首页直达)
 $("hp-aiclean-run")?.addEventListener("click", aiCleanHome);

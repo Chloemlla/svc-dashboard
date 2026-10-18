@@ -388,6 +388,34 @@ try{var _tm=localStorage.getItem("svc-theme");if(_tm==="dark"||_tm==="light")doc
     <div class="gempty">{{T:st_loading}}</div>
   </div>
 </div>
+<!-- PVE 虚拟机详情全屏滑层 / 面板 -->
+<div class="vm-sheet" id="vm-detail-sheet" hidden>
+  <div class="vm-sheet-top">
+    <span class="traj-iconbtn" id="vm-sheet-back" role="button" tabindex="0" aria-label="{{T:vmd_back}}">{{ICO:back:20}}</span>
+    <div class="vm-sheet-title-wrap">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span class="hp-vm-ico" id="vm-sheet-ico">{{ICO:server:16}}</span>
+        <h2 class="vm-sheet-title" id="vm-sheet-title">VM</h2>
+        <span class="hp-vm-status-badge" id="vm-sheet-badge"></span>
+      </div>
+      <span class="vm-sheet-sub" id="vm-sheet-sub"></span>
+    </div>
+    <div class="vm-sheet-top-actions">
+      <a class="btn-open-pve" id="vm-sheet-pve-link" href="#" target="_blank" rel="noopener">
+        <span>{{T:vmd_open_pve}}</span> {{ICO:ext:12}}
+      </a>
+    </div>
+  </div>
+  <div class="vm-sheet-nav" id="vm-sheet-nav">
+    <span class="chip active" data-vmtab="summary" role="button" tabindex="0">{{T:vmd_tab_summary}}</span>
+    <span class="chip" data-vmtab="hardware" role="button" tabindex="0">{{T:vmd_tab_hardware}}</span>
+    <span class="chip" data-vmtab="options" role="button" tabindex="0">{{T:vmd_tab_options}}</span>
+    <span class="chip" data-vmtab="tasks" role="button" tabindex="0">{{T:vmd_tab_tasks}}</span>
+  </div>
+  <div class="vm-sheet-body" id="vm-sheet-body">
+    <div class="gempty">{{T:st_loading}}</div>
+  </div>
+</div>
 <!-- 新建智能体终端弹层 (New Agent Session Dialog) -->
 <div class="ui-modal" id="tmux-new-modal" hidden role="presentation">
   <div class="ui-dialog tmux-new-dialog" role="dialog" aria-modal="true">

@@ -364,6 +364,11 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/vms":
             from . import pve
             self._send_json(200, pve.get_pve_vms())
+        elif path == "/api/vms/detail":
+            from . import pve
+            qs = parse_qs(urlparse(self.path).query)
+            vmid = (qs.get("vmid") or ["103"])[0]
+            self._send_json(200, pve.get_pve_vm_detail(vmid))
         else:
             self.send_error(404)
 
