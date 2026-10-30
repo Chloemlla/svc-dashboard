@@ -8909,6 +8909,27 @@ function tmuxSetTab() { thRenderTasks(); }
 function tmuxInitSubnav() {
   thEnsureBase();
   thRenderTasks();
+  thStartWatcher();
+}
+
+/* GitHub 没有 webhook 到内网，所以列表靠轮询保持新鲜：
+   45s 一次 gh issue list，只有数量/状态/run 发生变化才重绘，避免打扰正在看的详情。 */
+function thStartWatcher() {
+  if (TH.watch) return;
+  TH.watch = setInterval(async () => {
+    if (document.hidden || TH.busy) return;
+    const pane = $("tmux-view-tasks");
+    if (!pane || pane.offsetParent === null) return;
+    TH.busy = true;
+    try {
+      const d = await thGet("/api/th/issues?mode=all");
+      if (d.ok === false) return;
+      const sig = (d.issues || [])
+        .map(i => `${i.number}:${i.state}:${i.updatedAt}:${i.run ? i.run.state + i.run.id : ""}`)
+        .join(",");
+      if (sig && sig !== TH.sig) { TH.sig = sig; thRenderTasks(true); }
+    } finally { TH.busy = false; }
+  }, 45000);
 }
 
 function thEnsureBase() {
@@ -8940,8 +8961,9 @@ function thPercent(run) {
 }
 
 /* ---------------- 任务列表：正在跑 / 待派发 / 已完成 ---------------- */
-async function thRenderTasks() {
+async function thRenderTasks(silent) {
   const box = $("th-tasks"); if (!box) return;
+  const keep = silent ? TH.taskView : null;
   const wide = window.matchMedia("(min-width: 701px)").matches;
   box.hidden = false;
   const det = $("th-detail");
@@ -8994,6 +9016,8 @@ async function thRenderTasks() {
   if (wide && !TH.taskView) {
     const first = running[0] || pending[0] || done[0];
     if (first) thOpenTask(first.number, true);
+  } else if (keep && box.querySelector(`[data-th-open="${keep}"]`)) {
+    box.querySelectorAll(".th-row").forEach(el => el.classList.toggle("selected", Number(el.dataset.thOpen) === keep));
   }
   box.querySelectorAll("[data-th-act]").forEach(el => el.addEventListener("click", ev => {
     ev.stopPropagation();
