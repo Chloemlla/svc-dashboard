@@ -8904,25 +8904,9 @@ function thStateChip(run) {
   return `<span class="chip th-chip th-st th-${escHtml(run.state || "")}">${escHtml(thStateLabel(run.state))}</span>`;
 }
 
-function tmuxSetTab(tab) {
-  const show = { tasks: "tmux-view-tasks", sessions: "tmux-view-sessions" }[tab];
-  ["tmux-view-tasks", "tmux-view-sessions"].forEach(id => {
-    const el = $(id); if (el) el.hidden = id !== show;
-  });
-  document.querySelectorAll("#tmux-subnav .page-subnav-btn").forEach(b => b.classList.toggle("active", b.dataset.tv === tab));
-  TH.tab = tab;
-  if (tab === "tasks") { TH.taskView ? thOpenTask(TH.taskView, true) : thRenderTasks(); }
-  else if (typeof renderTmuxPage === "function") renderTmuxPage();
-}
+function tmuxSetTab() { thRenderTasks(); }
 
 function tmuxInitSubnav() {
-  const bar = $("tmux-subnav");
-  if (!bar || bar.dataset.wired) return;
-  bar.dataset.wired = "1";
-  bar.addEventListener("click", e => {
-    const btn = e.target.closest(".page-subnav-btn");
-    if (btn && btn.dataset.tv) tmuxSetTab(btn.dataset.tv);
-  });
   thEnsureBase();
   thRenderTasks();
 }
@@ -8958,9 +8942,11 @@ function thPercent(run) {
 /* ---------------- 任务列表：正在跑 / 待派发 / 已完成 ---------------- */
 async function thRenderTasks() {
   const box = $("th-tasks"); if (!box) return;
+  const wide = window.matchMedia("(min-width: 701px)").matches;
   box.hidden = false;
-  const det = $("th-detail"); if (det) det.hidden = true;
-  TH.taskView = null;
+  const det = $("th-detail");
+  if (det && !wide) det.hidden = true;
+  if (!TH.taskView) TH.taskView = null;
   box.innerHTML = `<div class="th-skeleton"><i></i><i></i><i></i></div>`;
   const d = await thGet("/api/th/issues?mode=all");
   if (d.ok === false) { box.innerHTML = `<div class="gempty t-red">${escHtml(d.msg || "无法读取任务")}</div>`; return; }
@@ -8987,6 +8973,7 @@ async function thRenderTasks() {
     ${group("running", "正在跑", running, true)}
     ${group("pending", "待派发", pending, true)}
     ${group("done", "已完成", done, false)}
+    <section class="th-group" id="th-others"></section>
     ${items.length ? "" : `<div class="gempty">${escHtml(t("th_empty"))}</div>`}`;
 
   const search = $("th-search");
@@ -9003,6 +8990,11 @@ async function thRenderTasks() {
   box.querySelectorAll("[data-th-open]").forEach(el => el.addEventListener("click", ev => {
     ev.stopPropagation(); thOpenTask(Number(el.dataset.thOpen));
   }));
+  thRenderOtherSessions();
+  if (wide && !TH.taskView) {
+    const first = running[0] || pending[0] || done[0];
+    if (first) thOpenTask(first.number, true);
+  }
   box.querySelectorAll("[data-th-act]").forEach(el => el.addEventListener("click", ev => {
     ev.stopPropagation();
     const n = Number(el.dataset.num), kind = el.dataset.thAct;
@@ -9019,11 +9011,11 @@ function thTaskCard(it, kind) {
   const pct = thPercent(run);
   const meta = thCardMeta([
     `<b>#${it.number}</b>`,
-    escHtml(it.state === "closed" ? "已关闭" : "open"),
     run ? escHtml(thHostName(run)) : "",
     run && run.stage ? escHtml(run.stage) : "",
     escHtml(thAgo(it.updatedAt)),
   ]);
+  const excerpt = it.excerpt ? `<div class="th-excerpt">${escHtml(it.excerpt)}</div>` : "";
   let actions = "";
   if (kind === "running") {
     actions = `
@@ -9037,19 +9029,65 @@ function thTaskCard(it, kind) {
       : `<span class="chip th-act primary" data-th-act="dispatch" data-num="${it.number}" role="button" tabindex="0">${escHtml(t("th_dispatch"))}</span>`;
   }
   const progress = kind === "running"
-    ? `<div class="th-progress"><i style="width:${pct}%"></i></div>
-       <div class="th-now">${escHtml((run.message || run.stage || "启动中").slice(0, 90))}</div>` : "";
-  return `<div class="th-card" data-th-open="${it.number}" role="button" tabindex="0">
-    <div class="th-card-main">
-      <div class="th-title">${escHtml(it.title || "")}</div>
-      ${meta}
-      ${progress}
+    ? `<div class="th-progress"><i style="width:${pct}%"></i></div>` : "";
+  const selected = TH.taskView === it.number ? " selected" : "";
+  return `<div class="th-card th-row${selected}" data-th-open="${it.number}" role="button" tabindex="0">
+    <div class="th-row-head">
+      <span class="th-st th-${run ? escHtml(run.state || "") : "pending"}">${escHtml(state)}</span>
+      <span class="th-row-time">${escHtml(thAgo(it.updatedAt))}</span>
     </div>
-    <div class="th-card-side">
-      <span class="chip th-chip th-st th-${run ? escHtml(run.state || "") : "pending"}">${escHtml(state)}</span>
-      ${actions}
-    </div>
+    <div class="th-title">${escHtml(it.title || "")}</div>
+    ${excerpt}
+    ${meta}
+    ${progress}
+    ${kind === "running" ? `<div class="th-row-actions">${actions}</div>` : ""}
   </div>`;
+}
+
+async function thRenderOtherSessions() {
+  const host = $("th-others"); if (!host) return;
+  const d = await thGet("/api/tmux");
+  const sessions = (d.sessions || []).filter(x => !(x.name || "").startsWith("th-"));
+  if (!sessions.length) { host.innerHTML = ""; return; }
+  host.innerHTML = `
+    <button class="th-group-head" type="button" data-th-others="1">
+      <span class="th-group-title">其他会话</span><span class="th-group-n">${sessions.length}</span>
+      <span class="th-group-caret">展开</span></button>
+    <div class="th-cards" hidden>${sessions.map(x => `
+      <div class="th-card th-row" data-th-session="${escHtml(x.name || "")}" role="button" tabindex="0">
+        <div class="th-row-head"><span class="th-st ${x.attached ? "th-running" : "th-pending"}">${x.attached ? "已连接" : "后台"}</span>
+          <span class="th-row-time">${(x.panes || []).length || x.panes_count || 0} 窗格</span></div>
+        <div class="th-title">${escHtml(x.name || "")}</div>
+        <div class="th-meta"><span>${escHtml(x.cwd || x.path || "")}</span></div>
+      </div>`).join("")}</div>`;
+  host.querySelector("[data-th-others]")?.addEventListener("click", ev => {
+    const cards = ev.currentTarget.nextElementSibling;
+    cards.hidden = !cards.hidden;
+    ev.currentTarget.querySelector(".th-group-caret").textContent = cards.hidden ? "展开" : "收起";
+  });
+  host.querySelectorAll("[data-th-session]").forEach(el => el.addEventListener("click", () => thOpenSession(el.dataset.thSession)));
+}
+
+async function thOpenSession(name) {
+  const det = $("th-detail"); if (!det) return;
+  TH.taskView = null;
+  det.innerHTML = `<div class="th-detail-bar"><span class="th-bar-title"><span class="th-bar-name">tmux · ${escHtml(name)}</span></span>
+      <div class="th-bar-actions"><span class="chip" data-th-wake="${escHtml(name)}" role="button" tabindex="0">唤醒</span></div></div>
+    <div class="th-detail-body"><pre class="th-log" id="th-session-pre">${escHtml(t("th_loading"))}</pre></div>`;
+  det.querySelector("[data-th-wake]")?.addEventListener("click", async () => {
+    const r = await apiPost("/api/tmux/wake", { session: name, pane: "" });
+    const d = await r.json().catch(() => ({ ok: false }));
+    if (!d.ok) alert(d.msg || "唤醒失败");
+  });
+  const pull = async () => {
+    const d = await thGet(`/api/tmux/capture?target=${encodeURIComponent(name)}&lines=300`);
+    const pre = $("th-session-pre"); if (!pre) return;
+    pre.textContent = d.ok === false ? (d.msg || "") : ((d.text || d.capture || d.log) || t("th_no_log"));
+    pre.scrollTop = pre.scrollHeight;
+  };
+  pull();
+  if (TH.timer) clearInterval(TH.timer);
+  TH.timer = setInterval(() => { const pre = $("th-session-pre"); if (!pre) { clearInterval(TH.timer); return; } pull(); }, 2500);
 }
 
 /* ---------------- 任务详情：状态 + 阶段 + 事件 + 原始日志 ---------------- */
@@ -9057,8 +9095,10 @@ async function thOpenTask(number, keepScroll) {
   const box = $("th-tasks"), det = $("th-detail");
   if (!box || !det) return;
   TH.taskView = number;
-  if (!keepScroll) { box.hidden = true; det.hidden = false; }
-  else { box.hidden = true; det.hidden = false; }
+  const wide = window.matchMedia("(min-width: 701px)").matches;
+  box.hidden = !wide;            // 桌面：左列表常驻；手机：列表让位给详情
+  det.hidden = false;
+  document.querySelectorAll("#th-tasks .th-row").forEach(el => el.classList.toggle("selected", Number(el.dataset.thOpen) === number));
   det.innerHTML = `<div class="th-skeleton"><i></i><i></i></div>`;
   const d = await thGet(`/api/th/task?number=${encodeURIComponent(number)}`);
   if (d.ok === false) { det.innerHTML = `<div class="gempty t-red">${escHtml(d.msg || "无法读取任务")}</div>`; return; }
@@ -9076,24 +9116,14 @@ async function thOpenTask(number, keepScroll) {
   const timeline = events.length
     ? shownEvents.map(evRow).join("") + (events.length > shownEvents.length
         ? `<li class="th-ev th-ev-more"><span class="chip" data-th-allevents="1" role="button" tabindex="0">展开其余 ${events.length - shownEvents.length} 条</span></li>` : "")
-    : `<li class="th-ev th-ev-empty">还没有执行记录</li>`;
+    : `<li class="th-ev th-ev-empty">${latest ? "还没有执行记录" : "尚未派发 · 点上方「派发」开始"}</li>`;
   const activeRun = latest && TH_ACTIVE.has(latest.state);
   const stages = TH_STAGE_ORDER.map((s, i) => {
     const done = i < stageIdx || (!activeRun && i === stageIdx);
     const now = activeRun && i === stageIdx;
     return `<span class="th-stage ${done ? "done" : ""} ${now ? "now" : ""}">${escHtml(s)}</span>`;
   }).join("");
-  det.innerHTML = `
-    <div class="th-detail-head">
-      <button class="chip" type="button" data-th-back="1">← 返回</button>
-      <span class="th-detail-state th-st th-${latest ? escHtml(latest.state || "") : "pending"}">${escHtml(latest ? thStateLabel(latest.state) : "待派发")}</span>
-    </div>
-    <h3 class="th-detail-title">#${issue.number} ${escHtml(issue.title || "")}</h3>
-    ${thCardMeta([escHtml(d.repo), latest ? escHtml(thHostName(latest)) : "", latest && latest.branch ? `<code>${escHtml(latest.branch)}</code>` : ""])}
-    ${latest ? `<div class="th-stages">${stages}</div>
-      <div class="th-progress ${["running", "waiting_user", "queued", "starting"].includes(latest.state) ? "" : "stopped"}"><i style="width:${thPercent(latest)}%"></i></div>
-      <div class="th-now">${escHtml(latest.message || "—")}</div>` : ""}
-    <div class="th-detail-actions">
+  const barActions = `
       <span class="chip primary" data-th-act="dispatch" data-num="${issue.number}" role="button" tabindex="0">${escHtml(t("th_dispatch"))}</span>
       ${latest && TH_ACTIVE.has(latest.state) ? `
         ${latest.state === "waiting_user" ? `<span class="chip" data-th-act="resume" data-run="${escHtml(latest.id)}" data-num="${issue.number}" role="button" tabindex="0">${escHtml(t("th_reply"))}</span>` : ""}
@@ -9101,8 +9131,28 @@ async function thOpenTask(number, keepScroll) {
       ${issue.state === "closed"
         ? `<span class="chip" data-th-act="restore" data-num="${issue.number}" role="button" tabindex="0">${escHtml(t("th_restore"))}</span>`
         : `<span class="chip" data-th-act="close" data-num="${issue.number}" role="button" tabindex="0">关闭任务</span>`}
-      <a class="chip" href="${escHtml(issue.url || "#")}" target="_blank" rel="noopener">GitHub ↗</a>
+      <a class="chip" href="${escHtml(issue.url || "#")}" target="_blank" rel="noopener">GitHub ↗</a>`;
+  det.innerHTML = `
+    <div class="th-detail-bar">
+      <button class="chip th-back" type="button" data-th-back="1">←</button>
+      <div class="th-bar-title">
+        <span class="th-st th-${latest ? escHtml(latest.state || "") : "pending"}">${escHtml(latest ? thStateLabel(latest.state) : "待派发")}</span>
+        <span class="th-bar-name">#${issue.number} ${escHtml(issue.title || "")}</span>
+      </div>
+      <div class="th-bar-actions">${barActions}</div>
     </div>
+    <div class="th-detail-body">
+    ${thCardMeta([escHtml(d.repo), latest ? escHtml(thHostName(latest)) : "", latest && latest.branch ? `<code>${escHtml(latest.branch)}</code>` : ""])}
+    ${latest ? `<div class="th-stages">${stages}</div>
+      <div class="th-progress ${["running", "waiting_user", "queued", "starting"].includes(latest.state) ? "" : "stopped"}"><i style="width:${thPercent(latest)}%"></i></div>
+      <div class="th-now">${escHtml(latest.message || "—")}</div>` : ""}
+    ${latest && latest.tmux_session ? `
+      <div class="th-section-title">会话 · ${escHtml(latest.tmux_session)}</div>
+      <div class="th-session-line">
+        <span class="th-st ${latest.state === "running" || latest.state === "waiting_user" ? "th-running" : "th-pending"}">${latest.state === "running" || latest.state === "waiting_user" ? "会话存活" : "会话已结束"}</span>
+        <span class="chip" data-th-session-open="${escHtml(latest.tmux_session)}" role="button" tabindex="0">查看终端</span>
+      </div>
+      <pre class="th-log" id="th-task-preview">${escHtml(t("th_loading"))}</pre>` : ""}
     <div class="th-section-title">执行时间线</div>
     <ol class="th-timeline">${timeline}</ol>
     <div class="th-section-title">Issue 内容</div>
@@ -9114,7 +9164,8 @@ async function thOpenTask(number, keepScroll) {
           <span>${escHtml(r.stage || "—")}</span><span>${escHtml(thAgo(new Date((r.started_at || r.created_at) * 1000).toISOString()))}</span>
           <span class="th-run-log-link">原始日志</span>
         </div>`).join("")}</div>` : ""}
-    <div id="th-runlog" class="th-runlog" hidden></div>`;
+    <div id="th-runlog" class="th-runlog" hidden></div>
+    </div>`;
 
   det.querySelector("[data-th-back]")?.addEventListener("click", () => { TH.taskView = null; TH.showAllEvents = false; det.hidden = true; thRenderTasks(); });
   det.querySelector("[data-th-allevents]")?.addEventListener("click", () => { TH.showAllEvents = true; thOpenTask(number, true); });
@@ -9131,6 +9182,19 @@ async function thOpenTask(number, keepScroll) {
     });
   });
   det.querySelectorAll("[data-th-runlog]").forEach(el => el.addEventListener("click", () => thShowLog(el.dataset.thRunlog)));
+  if (latest && latest.tmux_session) {
+    det.querySelector("[data-th-session-open]")?.addEventListener("click", () => thOpenSession(latest.tmux_session));
+    const pullPreview = async () => {
+      const pre = $("th-task-preview");
+      if (!pre) { if (TH.timer) clearInterval(TH.timer); return; }
+      const r = await thGet(`/api/th/log?id=${encodeURIComponent(latest.id)}&lines=120`);
+      pre.textContent = r.ok === false ? (r.msg || t("th_no_log")) : (r.log || t("th_no_log"));
+      pre.scrollTop = pre.scrollHeight;
+    };
+    pullPreview();
+    if (TH.timer) clearInterval(TH.timer);
+    TH.timer = setInterval(() => { const pre = $("th-task-preview"); if (!pre) { clearInterval(TH.timer); return; } pullPreview(); }, 3000);
+  }
 }
 
 function thShowLog(runId) {
