@@ -8905,14 +8905,13 @@ function thStateChip(run) {
 }
 
 function tmuxSetTab(tab) {
-  const show = { tasks: "tmux-view-tasks", sessions: "tmux-view-sessions", logs: "tmux-view-logs" }[tab];
-  ["tmux-view-tasks", "tmux-view-sessions", "tmux-view-logs"].forEach(id => {
+  const show = { tasks: "tmux-view-tasks", sessions: "tmux-view-sessions" }[tab];
+  ["tmux-view-tasks", "tmux-view-sessions"].forEach(id => {
     const el = $(id); if (el) el.hidden = id !== show;
   });
   document.querySelectorAll("#tmux-subnav .page-subnav-btn").forEach(b => b.classList.toggle("active", b.dataset.tv === tab));
   TH.tab = tab;
-  if (tab === "tasks") thRenderTasks();
-  else if (tab === "logs") thRenderRuns();
+  if (tab === "tasks") { TH.taskView ? thOpenTask(TH.taskView, true) : thRenderTasks(); }
   else if (typeof renderTmuxPage === "function") renderTmuxPage();
 }
 
@@ -8935,155 +8934,286 @@ function thEnsureBase() {
   ]);
 }
 
+const TH_ACTIVE = new Set(["queued", "starting", "running", "waiting_user"]);
+const TH_STAGE_ORDER = ["analyze", "plan", "implement", "test", "commit", "pr", "done"];
+
+function thHostName(run) {
+  if (!run) return "";
+  const hosts = (TH.hosts && TH.hosts.hosts) || [];
+  const h = hosts.find(x => x.id === run.host) || {};
+  return h.label || run.host || t("th_local");
+}
+
+function thCardMeta(parts) {
+  return `<div class="th-meta">${parts.filter(Boolean).map(x => `<span>${x}</span>`).join('<i class="th-dot"></i>')}</div>`;
+}
+
+function thPercent(run) {
+  if (!run) return 0;
+  if (typeof run.progress === "number" && run.progress > 0) return Math.min(100, run.progress);
+  const idx = TH_STAGE_ORDER.indexOf(run.stage || "");
+  return idx < 0 ? 0 : Math.round(((idx + 1) / TH_STAGE_ORDER.length) * 100);
+}
+
+/* ---------------- 任务列表：正在跑 / 待派发 / 已完成 ---------------- */
 async function thRenderTasks() {
   const box = $("th-tasks"); if (!box) return;
+  box.hidden = false;
+  const det = $("th-detail"); if (det) det.hidden = true;
+  TH.taskView = null;
   box.innerHTML = `<div class="th-skeleton"><i></i><i></i><i></i></div>`;
-  const d = await thGet(`/api/th/issues?mode=${encodeURIComponent(TH.mode)}&q=${encodeURIComponent(TH.q)}`);
-  TH.issues = d;
+  const d = await thGet("/api/th/issues?mode=all");
   if (d.ok === false) { box.innerHTML = `<div class="gempty t-red">${escHtml(d.msg || "无法读取任务")}</div>`; return; }
   const items = d.issues || [];
-  const chips = [["open", t("th_open")], ["running", t("th_running")], ["closed", t("th_closed")], ["all", t("th_all")]]
-    .map(([k, label]) => `<span class="chip ${TH.mode === k ? "active" : ""}" data-thmode="${k}" role="button" tabindex="0">${escHtml(label)}</span>`).join("");
-  const rows = items.length ? items.map(thCard).join("") : `<div class="gempty">${escHtml(t("th_empty"))}</div>`;
+  const running = items.filter(i => i.run && TH_ACTIVE.has(i.run.state));
+  const pending = items.filter(i => !i.run && i.state === "open");
+  const done = items.filter(i => !running.includes(i));
+
+  const group = (key, title, list, open) => !list.length ? "" : `
+    <section class="th-group">
+      <button class="th-group-head" type="button" data-th-group="${key}">
+        <span class="th-group-title">${escHtml(title)}</span>
+        <span class="th-group-n">${list.length}</span>
+        <span class="th-group-caret">${open ? "收起" : "展开"}</span>
+      </button>
+      <div class="th-cards" ${open ? "" : "hidden"}>${list.map(i => thTaskCard(i, key)).join("")}</div>
+    </section>`;
+
   box.innerHTML = `
-    <div class="filters th-filters">${chips}
+    <div class="filters th-filters">
       <input class="th-search" id="th-search" placeholder="搜索任务" value="${escHtml(TH.q)}" />
+      <span class="chip th-refresh" data-th-refresh="1" role="button" tabindex="0">刷新</span>
     </div>
-    <div class="th-list">${rows}</div>`;
-  box.querySelectorAll("[data-thmode]").forEach(el => el.addEventListener("click", () => { TH.mode = el.dataset.thmode; thRenderTasks(); }));
-  const s = $("th-search");
-  if (s) {
+    ${group("running", "正在跑", running, true)}
+    ${group("pending", "待派发", pending, true)}
+    ${group("done", "已完成", done, false)}
+    ${items.length ? "" : `<div class="gempty">${escHtml(t("th_empty"))}</div>`}`;
+
+  const search = $("th-search");
+  if (search) {
     let deb;
-    s.addEventListener("input", () => { clearTimeout(deb); deb = setTimeout(() => { TH.q = s.value.trim(); thRenderTasks(); }, 300); });
+    search.addEventListener("input", () => { clearTimeout(deb); deb = setTimeout(() => { TH.q = search.value.trim(); thRenderTasks(); }, 300); });
   }
+  box.querySelector("[data-th-refresh]")?.addEventListener("click", () => { TH.health = null; thRenderTasks(); });
+  box.querySelectorAll("[data-th-group]").forEach(h => h.addEventListener("click", () => {
+    const cards = h.nextElementSibling; if (!cards) return;
+    cards.hidden = !cards.hidden;
+    h.querySelector(".th-group-caret").textContent = cards.hidden ? "展开" : "收起";
+  }));
+  box.querySelectorAll("[data-th-open]").forEach(el => el.addEventListener("click", ev => {
+    ev.stopPropagation(); thOpenTask(Number(el.dataset.thOpen));
+  }));
   box.querySelectorAll("[data-th-act]").forEach(el => el.addEventListener("click", ev => {
     ev.stopPropagation();
-    const [kind, num] = [el.dataset.thAct, el.dataset.num];
-    if (kind === "dispatch") thDispatchSheet(num);
-    if (kind === "restore") thSetState(num, "open");
-    if (kind === "close") thSetState(num, "closed");
-  }));
-  box.querySelectorAll("[data-th-log]").forEach(el => el.addEventListener("click", ev => {
-    ev.stopPropagation(); thOpenLog(el.dataset.thLog);
+    const n = Number(el.dataset.num), kind = el.dataset.thAct;
+    if (kind === "dispatch") thDispatchSheet(n);
+    if (kind === "restore") thSetState(n, "open");
+    if (kind === "cancel") thCancel(el.dataset.run);
+    if (kind === "resume") thReply(el.dataset.run, n);
   }));
 }
 
-function thCard(it) {
+function thTaskCard(it, kind) {
   const run = it.run || null;
-  const excerpt = it.excerpt ? `<div class="th-excerpt">${escHtml(it.excerpt)}</div>` : "";
-  const acts = run
-    ? `<span class="chip th-chip" data-th-log="${escHtml(run.id)}" role="button" tabindex="0">${icon("activity", 12)}${escHtml(t("th_tab_logs"))}</span>`
-    : "";
-  const restore = it.state === "closed"
-    ? `<span class="chip th-chip" data-th-act="restore" data-num="${it.number}" role="button" tabindex="0">${escHtml(t("th_restore"))}</span>`
-    : `<span class="chip th-chip primary" data-th-act="dispatch" data-num="${it.number}" role="button" tabindex="0">${escHtml(t("th_dispatch"))}</span>`;
-  return `<div class="th-card">
+  const state = run ? thStateLabel(run.state) : (it.state === "closed" ? "已完成" : "待派发");
+  const pct = thPercent(run);
+  const meta = thCardMeta([
+    `<b>#${it.number}</b>`,
+    escHtml(it.state === "closed" ? "已关闭" : "open"),
+    run ? escHtml(thHostName(run)) : "",
+    run && run.stage ? escHtml(run.stage) : "",
+    escHtml(thAgo(it.updatedAt)),
+  ]);
+  let actions = "";
+  if (kind === "running") {
+    actions = `
+      ${run.state === "waiting_user" ? `<span class="chip th-act primary" data-th-act="resume" data-run="${escHtml(run.id)}" data-num="${it.number}" role="button" tabindex="0">${escHtml(t("th_reply"))}</span>` : ""}
+      <span class="chip th-act danger" data-th-act="cancel" data-run="${escHtml(run.id)}" role="button" tabindex="0">${escHtml(t("th_cancel"))}</span>`;
+  } else if (kind === "pending") {
+    actions = `<span class="chip th-act primary" data-th-act="dispatch" data-num="${it.number}" role="button" tabindex="0">${escHtml(t("th_dispatch"))}</span>`;
+  } else {
+    actions = it.state === "closed"
+      ? `<span class="chip th-act" data-th-act="restore" data-num="${it.number}" role="button" tabindex="0">${escHtml(t("th_restore"))}</span>`
+      : `<span class="chip th-act primary" data-th-act="dispatch" data-num="${it.number}" role="button" tabindex="0">${escHtml(t("th_dispatch"))}</span>`;
+  }
+  const progress = kind === "running"
+    ? `<div class="th-progress"><i style="width:${pct}%"></i></div>
+       <div class="th-now">${escHtml((run.message || run.stage || "启动中").slice(0, 90))}</div>` : "";
+  return `<div class="th-card" data-th-open="${it.number}" role="button" tabindex="0">
     <div class="th-card-main">
       <div class="th-title">${escHtml(it.title || "")}</div>
-      ${excerpt}
-      <div class="th-meta"><span>#${it.number}</span><span>${escHtml(thAgo(it.updatedAt))}</span></div>
+      ${meta}
+      ${progress}
     </div>
-    <div class="th-card-side">${thStateChip(run)}${thHostChip(run)}${acts}${restore}</div>
+    <div class="th-card-side">
+      <span class="chip th-chip th-st th-${run ? escHtml(run.state || "") : "pending"}">${escHtml(state)}</span>
+      ${actions}
+    </div>
   </div>`;
 }
 
-function thDispatchSheet(number) {
-  const box = $("th-tasks"); if (!box) return;
+/* ---------------- 任务详情：状态 + 阶段 + 事件 + 原始日志 ---------------- */
+async function thOpenTask(number, keepScroll) {
+  const box = $("th-tasks"), det = $("th-detail");
+  if (!box || !det) return;
+  TH.taskView = number;
+  if (!keepScroll) { box.hidden = true; det.hidden = false; }
+  else { box.hidden = true; det.hidden = false; }
+  det.innerHTML = `<div class="th-skeleton"><i></i><i></i></div>`;
+  const d = await thGet(`/api/th/task?number=${encodeURIComponent(number)}`);
+  if (d.ok === false) { det.innerHTML = `<div class="gempty t-red">${escHtml(d.msg || "无法读取任务")}</div>`; return; }
+  const issue = d.issue || {}, runs = d.runs || [], latest = d.latest || null, events = d.events || [];
+  const stageIdx = latest ? TH_STAGE_ORDER.indexOf(latest.stage || "") : -1;
+  const KEY_EV = new Set(["queued", "started", "waiting_user", "resume", "routed", "succeeded", "failed", "cancelled", "lost", "comment", "cleanup"]);
+  const evRow = e => `
+      <li class="th-ev th-ev-${escHtml(e.kind || "")}">
+        <span class="th-ev-time">${new Date((e.at || 0) * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</span>
+        <span class="th-ev-kind">${escHtml(e.kind || "")}</span>
+        <span class="th-ev-msg">${escHtml((e.message || "").slice(0, 200))}</span>
+      </li>`;
+  const keyEvents = events.filter(e => KEY_EV.has(e.kind || ""));
+  const shownEvents = TH.showAllEvents ? events : (keyEvents.length ? keyEvents : events);
+  const timeline = events.length
+    ? shownEvents.map(evRow).join("") + (events.length > shownEvents.length
+        ? `<li class="th-ev th-ev-more"><span class="chip" data-th-allevents="1" role="button" tabindex="0">展开其余 ${events.length - shownEvents.length} 条</span></li>` : "")
+    : `<li class="th-ev th-ev-empty">还没有执行记录</li>`;
+  const activeRun = latest && TH_ACTIVE.has(latest.state);
+  const stages = TH_STAGE_ORDER.map((s, i) => {
+    const done = i < stageIdx || (!activeRun && i === stageIdx);
+    const now = activeRun && i === stageIdx;
+    return `<span class="th-stage ${done ? "done" : ""} ${now ? "now" : ""}">${escHtml(s)}</span>`;
+  }).join("");
+  det.innerHTML = `
+    <div class="th-detail-head">
+      <button class="chip" type="button" data-th-back="1">← 返回</button>
+      <span class="th-detail-state th-st th-${latest ? escHtml(latest.state || "") : "pending"}">${escHtml(latest ? thStateLabel(latest.state) : "待派发")}</span>
+    </div>
+    <h3 class="th-detail-title">#${issue.number} ${escHtml(issue.title || "")}</h3>
+    ${thCardMeta([escHtml(d.repo), latest ? escHtml(thHostName(latest)) : "", latest && latest.branch ? `<code>${escHtml(latest.branch)}</code>` : ""])}
+    ${latest ? `<div class="th-stages">${stages}</div>
+      <div class="th-progress ${["running", "waiting_user", "queued", "starting"].includes(latest.state) ? "" : "stopped"}"><i style="width:${thPercent(latest)}%"></i></div>
+      <div class="th-now">${escHtml(latest.message || "—")}</div>` : ""}
+    <div class="th-detail-actions">
+      <span class="chip primary" data-th-act="dispatch" data-num="${issue.number}" role="button" tabindex="0">${escHtml(t("th_dispatch"))}</span>
+      ${latest && TH_ACTIVE.has(latest.state) ? `
+        ${latest.state === "waiting_user" ? `<span class="chip" data-th-act="resume" data-run="${escHtml(latest.id)}" data-num="${issue.number}" role="button" tabindex="0">${escHtml(t("th_reply"))}</span>` : ""}
+        <span class="chip danger" data-th-act="cancel" data-run="${escHtml(latest.id)}" role="button" tabindex="0">${escHtml(t("th_cancel"))}</span>` : ""}
+      ${issue.state === "closed"
+        ? `<span class="chip" data-th-act="restore" data-num="${issue.number}" role="button" tabindex="0">${escHtml(t("th_restore"))}</span>`
+        : `<span class="chip" data-th-act="close" data-num="${issue.number}" role="button" tabindex="0">关闭任务</span>`}
+      <a class="chip" href="${escHtml(issue.url || "#")}" target="_blank" rel="noopener">GitHub ↗</a>
+    </div>
+    <div class="th-section-title">执行时间线</div>
+    <ol class="th-timeline">${timeline}</ol>
+    <div class="th-section-title">Issue 内容</div>
+    <div class="th-body">${escHtml(issue.body || "（无正文）")}</div>
+    ${runs.length ? `<div class="th-section-title">历史执行</div>
+      <div class="th-runs">${runs.map(r => `
+        <div class="th-run-row" data-th-runlog="${escHtml(r.id)}" role="button" tabindex="0">
+          <span>${escHtml(r.agent)}</span><span>${escHtml(thStateLabel(r.state))}</span>
+          <span>${escHtml(r.stage || "—")}</span><span>${escHtml(thAgo(new Date((r.started_at || r.created_at) * 1000).toISOString()))}</span>
+          <span class="th-run-log-link">原始日志</span>
+        </div>`).join("")}</div>` : ""}
+    <div id="th-runlog" class="th-runlog" hidden></div>`;
+
+  det.querySelector("[data-th-back]")?.addEventListener("click", () => { TH.taskView = null; TH.showAllEvents = false; det.hidden = true; thRenderTasks(); });
+  det.querySelector("[data-th-allevents]")?.addEventListener("click", () => { TH.showAllEvents = true; thOpenTask(number, true); });
+  det.querySelectorAll("[data-th-act]").forEach(el => {
+    if (el.tagName === "A") return;
+    el.addEventListener("click", ev => {
+      ev.stopPropagation();
+      const n = Number(el.dataset.num), kind = el.dataset.thAct;
+      if (kind === "dispatch") thDispatchSheet(n, () => thOpenTask(n));
+      if (kind === "restore") thSetState(n, "open");
+      if (kind === "close") thSetState(n, "closed");
+      if (kind === "cancel" && el.dataset.run) thCancel(el.dataset.run, () => thOpenTask(n));
+      if (kind === "resume" && el.dataset.run) thReply(el.dataset.run, n);
+    });
+  });
+  det.querySelectorAll("[data-th-runlog]").forEach(el => el.addEventListener("click", () => thShowLog(el.dataset.thRunlog)));
+}
+
+function thShowLog(runId) {
+  const box = $("th-runlog"); if (!box) return;
+  if (!box.hidden && TH.logId === runId) { box.hidden = true; TH.logId = null; return; }
+  TH.logId = runId;
+  box.hidden = false;
+  box.innerHTML = `<div class="th-runlog-head"><span>原始输出 · ${escHtml(runId)}</span>
+    <span class="chip" data-th-logclose="1" role="button" tabindex="0">收起</span></div>
+    <pre class="th-log" id="th-log-pre">${escHtml(t("th_loading"))}</pre>`;
+  box.querySelector("[data-th-logclose]")?.addEventListener("click", () => { box.hidden = true; TH.logId = null; });
+  const pull = async () => {
+    if (TH.logId !== runId) return;
+    const d = await thGet(`/api/th/log?id=${encodeURIComponent(runId)}&lines=400`);
+    const pre = $("th-log-pre"); if (!pre) return;
+    pre.textContent = d.ok === false ? (d.msg || t("th_no_log")) : (d.log || t("th_no_log"));
+    pre.scrollTop = pre.scrollHeight;
+  };
+  pull();
+  if (TH.timer) clearInterval(TH.timer);
+  TH.timer = setInterval(() => { if (TH.logId !== runId || !box || box.hidden) { clearInterval(TH.timer); return; } pull(); }, 2500);
+}
+
+function thDispatchSheet(number, after) {
+  const host = TH.taskView ? $("th-detail") : $("th-tasks");
+  if (!host) return;
   document.querySelectorAll(".th-sheet").forEach(el => el.remove());
-  const agents = (TH.health && TH.health.agents) || [];
-  const defAgent = (TH.health && TH.health.default_agent) || agents[0] || "pi";
+  const agents = (TH.health && TH.health.agents) || ["pi"];
+  const labels = (TH.health && TH.health.agent_labels) || {};
+  const defAgent = (TH.health && TH.health.default_agent) || agents[0];
   const hosts = ((TH.hosts && TH.hosts.hosts) || []).filter(h => h.online !== false);
   const defHost = (TH.hosts && TH.hosts.default) || (hosts[0] || {}).id || "";
-  const labels = (TH.health && TH.health.agent_labels) || {};
-  const agentChips = agents.map(a => `<span class="chip ${a === defAgent ? "active" : ""}" data-ag="${escHtml(a)}" role="button" tabindex="0">${escHtml(labels[a] || a)}</span>`).join("");
-  const hostChips = hosts.map(h => `<span class="chip ${h.id === defHost ? "active" : ""}" data-hs="${escHtml(h.id)}" role="button" tabindex="0">${escHtml(h.label || h.id)}</span>`).join("");
   const sheet = document.createElement("div");
   sheet.className = "th-sheet";
   sheet.innerHTML = `
     <div class="th-sheet-title">#${escHtml(String(number))} · ${escHtml(t("th_dispatch"))}</div>
-    <div class="th-sheet-row"><span class="th-sheet-label">${escHtml(t("th_agent"))}</span>${agentChips}</div>
-    <div class="th-sheet-row"><span class="th-sheet-label">${escHtml(t("th_host"))}</span>${hostChips}</div>
+    <div class="th-sheet-row"><span class="th-sheet-label">${escHtml(t("th_agent"))}</span>
+      ${agents.map(a => `<span class="chip ${a === defAgent ? "active" : ""}" data-ag="${escHtml(a)}" role="button" tabindex="0">${escHtml(labels[a] || a)}</span>`).join("")}</div>
+    <div class="th-sheet-row"><span class="th-sheet-label">${escHtml(t("th_host"))}</span>
+      ${hosts.map(h => `<span class="chip ${h.id === defHost ? "active" : ""}" data-hs="${escHtml(h.id)}" role="button" tabindex="0">${escHtml(h.label || h.id)}</span>`).join("")}</div>
     <div class="th-sheet-actions">
-      <span class="chip" data-th-cancel="1" role="button" tabindex="0">取消</span>
-      <span class="chip primary" data-th-go="1" role="button" tabindex="0">${escHtml(t("th_dispatch"))}</span>
+      <span class="chip" data-th-sheet-cancel="1" role="button" tabindex="0">取消</span>
+      <span class="chip primary" data-th-sheet-go="1" role="button" tabindex="0">${escHtml(t("th_dispatch"))}</span>
     </div>`;
-  box.prepend(sheet);
-  let agent = defAgent, host = defHost;
-  sheet.querySelectorAll("[data-ag]").forEach(el => el.addEventListener("click", () => {
-    agent = el.dataset.ag; sheet.querySelectorAll("[data-ag]").forEach(x => x.classList.toggle("active", x === el));
-  }));
-  sheet.querySelectorAll("[data-hs]").forEach(el => el.addEventListener("click", () => {
-    host = el.dataset.hs; sheet.querySelectorAll("[data-hs]").forEach(x => x.classList.toggle("active", x === el));
-  }));
-  sheet.querySelector("[data-th-cancel]").addEventListener("click", () => sheet.remove());
-  sheet.querySelector("[data-th-go]").addEventListener("click", async () => {
-    sheet.querySelector("[data-th-go]").textContent = "…";
-    const r = await apiPost("/api/th/dispatch", { number: Number(number), agent, host });
+  host.prepend(sheet);
+  let agent = defAgent, hostId = defHost;
+  sheet.querySelectorAll("[data-ag]").forEach(el => el.addEventListener("click", () => { agent = el.dataset.ag; sheet.querySelectorAll("[data-ag]").forEach(x => x.classList.toggle("active", x === el)); }));
+  sheet.querySelectorAll("[data-hs]").forEach(el => el.addEventListener("click", () => { hostId = el.dataset.hs; sheet.querySelectorAll("[data-hs]").forEach(x => x.classList.toggle("active", x === el)); }));
+  sheet.querySelector("[data-th-sheet-cancel]").addEventListener("click", () => sheet.remove());
+  sheet.querySelector("[data-th-sheet-go]").addEventListener("click", async () => {
+    const go = sheet.querySelector("[data-th-sheet-go]");
+    go.textContent = "…";
+    const r = await apiPost("/api/th/dispatch", { number: Number(number), agent, host: hostId });
     const d = await r.json().catch(() => ({ ok: false, msg: "bad json" }));
     sheet.remove();
-    if (d.ok) { toast?.(t("th_started")); TH.health = null; thRenderTasks(); }
-    else alert(d.msg || "派发失败");
+    TH.health = null;
+    if (!d.ok) { alert(d.msg || "派发失败"); return; }
+    if (after) after(); else thRenderTasks();
   });
-  sheet.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
 async function thSetState(number, state) {
   const r = await apiPost("/api/th/state", { number: Number(number), state });
   const d = await r.json().catch(() => ({ ok: false, msg: "bad json" }));
-  if (d.ok) thRenderTasks();
-  else alert(d.msg || "操作失败");
+  if (!d.ok) { alert(d.msg || "操作失败"); return; }
+  TH.taskView ? thOpenTask(TH.taskView) : thRenderTasks();
 }
 
-async function thRenderRuns() {
-  const box = $("th-runs"); if (!box) return;
-  box.innerHTML = `<div class="th-skeleton"><i></i><i></i><i></i></div>`;
-  const d = await thGet("/api/th/runs?limit=40");
-  TH.runs = d;
-  if (d.ok === false) { box.innerHTML = `<div class="gempty t-red">${escHtml(d.msg || "无法读取执行记录")}</div>`; return; }
-  const runs = d.runs || [];
-  if (!runs.length) { box.innerHTML = `<div class="gempty">${escHtml(t("th_no_runs"))}</div>`; return; }
-  box.innerHTML = `<div class="th-list">` + runs.map(r => `
-    <div class="th-card th-run" data-th-log="${escHtml(r.id)}" role="button" tabindex="0">
-      <div class="th-card-main">
-        <div class="th-title">#${r.issue_number} ${escHtml(r.issue_title || "")}</div>
-        <div class="th-meta"><span>${escHtml(r.agent || "")}</span><span>${escHtml(r.stage || "—")}</span>
-          <span>${escHtml((r.message || "").slice(0, 80))}</span></div>
-      </div>
-      <div class="th-card-side">${thStateChip(r)}${thHostChip(r)}</div>
-    </div>`).join("") + `</div>`;
-  box.querySelectorAll("[data-th-log]").forEach(el => el.addEventListener("click", () => thOpenLog(el.dataset.thLog)));
+async function thCancel(runId, after) {
+  const r = await apiPost("/api/th/cancel", { id: runId });
+  const d = await r.json().catch(() => ({ ok: false }));
+  if (!d.ok) { alert(d.msg || "取消失败"); return; }
+  after ? after() : (TH.taskView ? thOpenTask(TH.taskView) : thRenderTasks());
 }
 
-async function thOpenLog(id) {
-  TH.logId = id;
-  const box = $("th-log"); if (!box) return;
-  box.hidden = false;
-  box.innerHTML = `<div class="th-log-head"><span class="th-title">${escHtml(id)}</span>
-    <span class="chip" data-th-back="1" role="button" tabindex="0">返回</span>
-    <span class="chip" data-th-cancel-run="${escHtml(id)}" role="button" tabindex="0">${escHtml(t("th_cancel"))}</span></div>
-    <pre class="th-log" id="th-log-pre">${escHtml(t("th_loading"))}</pre>`;
-  const pull = async () => {
-    if (TH.logId !== id) return;
-    const d = await thGet(`/api/th/log?id=${encodeURIComponent(id)}&lines=400`);
-    const pre = $("th-log-pre");
-    if (!pre) return;
-    if (d.ok === false) { pre.textContent = d.msg || t("th_no_log"); return; }
-    const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 24;
-    pre.textContent = d.log || t("th_no_log");
-    if (atBottom) pre.scrollTop = pre.scrollHeight;
-  };
-  box.querySelector("[data-th-back]").addEventListener("click", () => { TH.logId = null; const b = $("th-log"); if (b) b.hidden = true; tmuxSetTab("logs"); });
-  box.querySelector("[data-th-cancel-run]").addEventListener("click", async () => {
-    const r = await apiPost("/api/th/cancel", { id });
-    const d = await r.json().catch(() => ({ ok: false }));
-    if (d.ok) pull();
-  });
-  await pull();
-  if (TH.timer) clearInterval(TH.timer);
-  TH.timer = setInterval(() => { if (TH.tab !== "log") { clearInterval(TH.timer); return; } pull(); }, 2500);
+async function thReply(runId, number) {
+  const text = window.prompt("给 agent 的指令");
+  if (!text) return;
+  const r = await apiPost("/api/th/resume", { id: runId, text });
+  const d = await r.json().catch(() => ({ ok: false }));
+  if (!d.ok) { alert(d.msg || "发送失败"); return; }
+  TH.taskView ? thOpenTask(number) : thRenderTasks();
 }
-
-
 
 // 服务页：服务 / 定时 / 日志 三个小 tab（与活动页同一套 subnav）
 function initSvcSubnav() {

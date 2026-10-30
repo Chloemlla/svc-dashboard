@@ -274,6 +274,12 @@ class Handler(BaseHTTPRequestHandler):
             mode = (qs.get("mode") or ["open"])[0]
             q = (qs.get("q") or [""])[0]
             self._send_json(200, taskhub.issues(mode=mode, q=q))
+        elif path == "/api/th/task":
+            try:
+                num = int((parse_qs(urlparse(self.path).query).get("number") or [""])[0])
+            except ValueError:
+                num = 0
+            self._send_json(200, taskhub.task(num) if num else {"ok": False, "msg": "missing number"})
         elif path == "/api/th/runs":
             qs = parse_qs(urlparse(self.path).query)
             try:

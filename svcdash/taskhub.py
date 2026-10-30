@@ -83,6 +83,30 @@ def issues(mode="open", q=""):
     return {"ok": True, "repo": d.get("repo"), "issues": items}
 
 
+def task(number):
+    """一个任务 = Issue + 它的全部 run + 最近 run 的事件流。"""
+    h = health()
+    if not h.get("ok"):
+        return h
+    repo = h.get("issue_repo")
+    if not repo:
+        return {"ok": False, "msg": "未配置 Issue 仓库"}
+    issue = _req(f"/api/issues/{repo}/{int(number)}", timeout=45)
+    if issue.get("ok") is False:
+        return issue
+    for r in issue.get("runs") or []:
+        r.pop("events", None)
+    runs = issue.get("runs") or []
+    latest = runs[0] if runs else None
+    events = []
+    if latest:
+        detail = _req(f"/api/runs/{latest['id']}", timeout=20)
+        events = detail.get("events") or []
+    return {"ok": True, "repo": repo, "issue": issue, "runs": runs,
+            "latest": latest, "events": events, "agents": h.get("agents"),
+            "default_agent": h.get("default_agent")}
+
+
 def runs(limit=40):
     d = _req(f"/api/runs?limit={int(limit)}", timeout=20)
     if d.get("ok") is False:
