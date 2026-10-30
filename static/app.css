@@ -7702,3 +7702,41 @@ body.is-static .mp-pv-status-pill.mono span:not(.mp-pv-status-dot) {
   background-size: 220% 100%; animation: thShimmer 1.2s ease-in-out infinite;
 }
 @keyframes thShimmer { from { background-position: 140% 0; } to { background-position: -40% 0; } }
+
+/* ===== 服务 / 定时任务：与 活动·任务 同一套行卡片 ===== */
+.svc-panel { background: transparent; border: 0; box-shadow: none; padding: 0; }
+#svc, #cron { border-collapse: separate; border-spacing: 0 8px; width: 100%; }
+#svc thead th, #cron thead th {
+  background: transparent; border: 0; padding: 2px 12px 4px; text-align: left;
+  font-size: 10.5px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--text-soft);
+}
+#svc tbody tr, #cron tbody tr { background: var(--bg-panel); }
+#svc tbody td, #cron tbody td {
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  padding: 11px 12px; vertical-align: middle; font-size: 12.5px;
+}
+#svc tbody td:first-child, #cron tbody td:first-child {
+  border-left: 1px solid var(--border); border-radius: var(--card-radius) 0 0 var(--card-radius);
+}
+#svc tbody td:last-child, #cron tbody td:last-child {
+  border-right: 1px solid var(--border); border-radius: 0 var(--card-radius) var(--card-radius) 0;
+}
+#svc tbody tr:hover td, #cron tbody tr:hover td { background: var(--bg-hover); }
+#svc .name .svc { font-weight: 650; font-size: 13.5px; color: var(--text-title); }
+#svc .badge { border-radius: 999px; padding: 2px 8px; font-size: 10.5px; font-weight: 600; }
+#svc .port a { font-variant-numeric: tabular-nums; font-weight: 600; }
+#svc .svc-detail, #svc .ctl-btn { border-radius: 999px; padding: 3px 9px; font-size: 11px; }
+#svc tbody tr:has(> td.empty) td { background: none; border: 0; }
+
+@media (max-width: 700px) {
+  #svc tbody tr, #cron tbody tr {
+    border: 1px solid var(--border); border-radius: var(--card-radius);
+    padding: 10px 12px; margin-bottom: 8px; display: block;
+  }
+  #svc tbody td, #cron tbody td { border: 0; padding: 3px 0; }
+  #svc tbody td::before, #cron tbody td::before {
+    content: attr(data-label); display: block; font-size: 10px; letter-spacing: .04em;
+    text-transform: uppercase; color: var(--text-soft); margin-bottom: 1px;
+  }
+}

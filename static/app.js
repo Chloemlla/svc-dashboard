@@ -118,6 +118,9 @@ function esHtml(ico, title) {
 let autoOn = true;           // 自动刷新总开关(旧版遗留: false 且无处置 true, 整条轮询链路死代码;
                               // 首页资源磁贴需要活数据 → 默认开。桌面 10s/移动 30s/后台停/长按锁定停)
 let autoLocked = false;      // 长按锁定: true = 30s 自动刷新完全停止
+// TaskHub 状态容器：必须早于任何 setCat()/init 逻辑声明，否则 TDZ 报错。
+const TH = { tab: "events", mode: "open", q: "", issues: null, runs: null,
+             hosts: null, health: null, logId: null, timer: null, sheet: null };
 let filter = "user"; // 默认只显示用户服务, 隐藏系统服务
 let services = [];
 const $ = (id) => document.getElementById(id);
@@ -2514,8 +2517,6 @@ function getRepoTheme(repo) {
 async function renderActivityPage() {
   const ap = $("activity-page");
   if (ap) ap.hidden = false;
-  thInitTabs();
-  if (TH.tab !== "events") { thSetTab(TH.tab); return; }
   const container = $("activity-body");
   if (!container) return;
   const d = await fetchGoalsData();
@@ -8685,6 +8686,7 @@ function setCat(c, save) {
   if (c === "tmux" || c === "goal") {
     const tp = $("tmux-panel");
     if (tp) tp.hidden = false;
+    tmuxInitSubnav();
     renderTmuxPage();
   }
   if (c === "svc") {
@@ -8861,8 +8863,7 @@ hydrateFragments();
 // ================= TaskHub：任务（Issue）/ 执行日志 =================
 // 数据来自本机 TaskHub 引擎(经 svc-dashboard 后端 /api/th/* 转发)；界面完全复用
 // 仪表盘的样式与组件，任务只是"活动"里的一个小 tab。
-const TH = { tab: "events", mode: "open", q: "", issues: null, runs: null,
-             hosts: null, health: null, logId: null, timer: null, sheet: null };
+
 
 async function thGet(path) {
   try {
@@ -8903,20 +8904,28 @@ function thStateChip(run) {
   return `<span class="chip th-chip th-st th-${escHtml(run.state || "")}">${escHtml(thStateLabel(run.state))}</span>`;
 }
 
-function thSetTab(tab) {
-  TH.tab = tab;
-  document.querySelectorAll("#th-subtabs .agent-subnav-btn").forEach(c => c.classList.toggle("active", c.dataset.th === tab));
-  const show = { events: "activity-body", issues: "th-tasks", runs: "th-runs", log: "th-log" }[tab] || "activity-body";
-  ["activity-body", "th-tasks", "th-runs", "th-log"].forEach(id => {
+function tmuxSetTab(tab) {
+  const show = { tasks: "tmux-view-tasks", sessions: "tmux-view-sessions", logs: "tmux-view-logs" }[tab];
+  ["tmux-view-tasks", "tmux-view-sessions", "tmux-view-logs"].forEach(id => {
     const el = $(id); if (el) el.hidden = id !== show;
   });
-  const af = $("act-filters"); if (af) af.hidden = tab !== "events";
-  if (tab === "issues" || tab === "runs") thEnsureBase().then(() => {
-    if (TH.tab === "issues") thRenderTasks(); else if (TH.tab === "runs") thRenderRuns();
+  document.querySelectorAll("#tmux-subnav .page-subnav-btn").forEach(b => b.classList.toggle("active", b.dataset.tv === tab));
+  TH.tab = tab;
+  if (tab === "tasks") thRenderTasks();
+  else if (tab === "logs") thRenderRuns();
+  else if (typeof renderTmuxPage === "function") renderTmuxPage();
+}
+
+function tmuxInitSubnav() {
+  const bar = $("tmux-subnav");
+  if (!bar || bar.dataset.wired) return;
+  bar.dataset.wired = "1";
+  bar.addEventListener("click", e => {
+    const btn = e.target.closest(".page-subnav-btn");
+    if (btn && btn.dataset.tv) tmuxSetTab(btn.dataset.tv);
   });
-  if (tab === "issues") thRenderTasks();
-  else if (tab === "runs") thRenderRuns();
-  else if (tab === "events" && typeof renderActivityPage === "function") renderActivityPage();
+  thEnsureBase();
+  thRenderTasks();
 }
 
 function thEnsureBase() {
@@ -9048,7 +9057,7 @@ async function thRenderRuns() {
 async function thOpenLog(id) {
   TH.logId = id;
   const box = $("th-log"); if (!box) return;
-  thSetTab("log");
+  box.hidden = false;
   box.innerHTML = `<div class="th-log-head"><span class="th-title">${escHtml(id)}</span>
     <span class="chip" data-th-back="1" role="button" tabindex="0">返回</span>
     <span class="chip" data-th-cancel-run="${escHtml(id)}" role="button" tabindex="0">${escHtml(t("th_cancel"))}</span></div>
@@ -9063,7 +9072,7 @@ async function thOpenLog(id) {
     pre.textContent = d.log || t("th_no_log");
     if (atBottom) pre.scrollTop = pre.scrollHeight;
   };
-  box.querySelector("[data-th-back]").addEventListener("click", () => { TH.logId = null; thSetTab("runs"); });
+  box.querySelector("[data-th-back]").addEventListener("click", () => { TH.logId = null; const b = $("th-log"); if (b) b.hidden = true; tmuxSetTab("logs"); });
   box.querySelector("[data-th-cancel-run]").addEventListener("click", async () => {
     const r = await apiPost("/api/th/cancel", { id });
     const d = await r.json().catch(() => ({ ok: false }));
@@ -9074,11 +9083,7 @@ async function thOpenLog(id) {
   TH.timer = setInterval(() => { if (TH.tab !== "log") { clearInterval(TH.timer); return; } pull(); }, 2500);
 }
 
-function thInitTabs() {
-  const bar = $("th-subtabs"); if (!bar || bar.dataset.wired) return;
-  bar.dataset.wired = "1";
-  bar.querySelectorAll("[data-th]").forEach(el => el.addEventListener("click", () => thSetTab(el.dataset.th)));
-}
+
 
 // 服务页：服务 / 定时 / 日志 三个小 tab（与活动页同一套 subnav）
 function initSvcSubnav() {
