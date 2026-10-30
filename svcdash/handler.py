@@ -444,7 +444,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         if path not in ("/api/manage", "/api/cleanup", "/api/aicleanup", "/api/uservice", "/api/svcctl", "/api/runtimes", "/api/models", "/api/goalresume", "/api/tmux/wake", "/api/tmux/new", "/api/tmux/kill", "/api/tmux/send", "/api/tailscale/ping", "/api/tailscale/netcheck", "/api/tasks/run",
-                "/api/th/dispatch", "/api/th/state", "/api/th/cancel", "/api/th/resume"):
+                "/api/th/dispatch", "/api/th/state", "/api/th/cancel", "/api/th/resume", "/api/th/new"):
             self.send_error(404)
             return
         # 先消费请求体再鉴权: 403(跨站/无token)提前返回时若 body 残留在
@@ -479,6 +479,16 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "msg": t(lang, "m_badreq", e=str(e))})
             return
         lang = detect_lang(self.headers.get("Accept-Language", ""), urlparse(self.path).query)
+        if path == "/api/th/new":
+            title = str(body.get("title") or "").strip()
+            if not title:
+                self._send_json(400, {"ok": False, "msg": "missing title"})
+                return
+            res = taskhub.create(title, str(body.get("body") or ""),
+                                 str(body.get("agent") or "pi"), str(body.get("host") or ""))
+            self.log_message("th_new issue=%s agent=%s host=%s", res.get("number"), body.get("agent"), body.get("host"))
+            self._send_json(200 if res.get("ok") else 400, res)
+            return
         if path == "/api/th/dispatch":
             num = body.get("number")
             if not num:

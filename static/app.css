@@ -8062,3 +8062,38 @@ body.is-static #btn-tmux-new-open { display: none !important; }
 body.is-static #tmux-panel .th-detail-body { padding-top: 2px; }
 #tmux-panel .th-static-row .th-excerpt { filter: none; opacity: .92; user-select: text; pointer-events: auto; }
 #tmux-panel .th-static-row:hover .th-excerpt { filter: none; opacity: .92; }
+
+/* ===== 新建任务弹层：左执行者 / 右正文 ===== */
+.ui-dialog.nt-dialog { width: min(920px, 96vw); max-height: 88vh; display: flex; flex-direction: column; }
+.nt-body { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 18px; padding: 16px 20px 18px; overflow: hidden; min-height: 0; }
+.nt-side { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.nt-side-label { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-soft); }
+.nt-agents { display: flex; flex-direction: column; gap: 6px; }
+.nt-agent {
+  display: flex; flex-direction: column; gap: 2px; padding: 9px 11px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--bg-hover); transition: border-color .12s, background .12s;
+}
+.nt-agent:hover { border-color: var(--text-soft); }
+.nt-agent.active { border-color: var(--accent-blue-bd); background: var(--accent-blue-bg); }
+.nt-agent-name { font-size: 13px; font-weight: 650; color: var(--text-title); }
+.nt-agent-desc { font-size: 10.5px; color: var(--text-soft); }
+.nt-hosts { display: flex; flex-wrap: wrap; gap: 5px; }
+.nt-hosts .chip { height: 24px; font-size: 11px; }
+.nt-hosts .chip.active { border-color: var(--accent-blue-bd); background: var(--accent-blue-bg); color: var(--accent-blue-tx); }
+.nt-note { margin-top: auto; font-size: 10.5px; line-height: 1.55; color: var(--text-ghost, var(--text-soft)); }
+.nt-main { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; }
+.nt-title-input { height: 38px; font-size: 14px; font-weight: 600; }
+.nt-body-input {
+  flex: 1 1 auto; min-height: 300px; resize: vertical;
+  font-size: 12.5px; line-height: 1.65; padding: 12px 13px;
+}
+@media (max-width: 700px) {
+  .ui-dialog.nt-dialog { width: 96vw; max-height: 92vh; }
+  .nt-body { grid-template-columns: 1fr; gap: 12px; }
+  .nt-agents { flex-direction: row; }
+  .nt-agent { flex: 1 1 0; }
+  .nt-note { margin-top: 4px; }
+  .nt-body-input { min-height: 210px; }
+}
+.ui-dialog.tmux-new-dialog.nt-dialog { width: min(920px, 96vw) !important; max-width: none; }
+.ui-dialog.tmux-new-dialog.nt-dialog .tmux-new-body { display: none; }

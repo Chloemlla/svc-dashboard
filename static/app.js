@@ -3740,82 +3740,88 @@ function stopTmuxSheetLive() {
     });
   }
 
-  // 新建智能体会话弹层 (New Agent Modal)
+  // 新建任务弹层：左边执行者 / 右边 Issue 正文，创建即派发到 chezmoi 的 Issue
   const newOpenBtn = $("btn-tmux-new-open");
   const newModal = $("tmux-new-modal");
   const newCloseBtn = $("btn-tmux-new-close");
   const newCancelBtn = $("btn-tmux-new-cancel");
   const newSubmitBtn = $("btn-tmux-new-submit");
   const agentGrid = $("tmux-new-agent-grid");
-  const cwdChips = $("tmux-new-cwd-chips");
-  const cwdInput = $("tmux-new-cwd-input");
-  const promptInput = $("tmux-new-prompt-input");
-  const nameInput = $("tmux-new-name-input");
+  const hostChips = $("nt-host-chips");
+  const titleInput = $("nt-title");
+  const bodyInput = $("nt-body");
 
-  let selectedAgent = "agy";
+  let ntAgent = "omp";
+  let ntHost = "";
+
+  async function ntLoadHosts() {
+    if (!hostChips) return;
+    hostChips.innerHTML = `<span class="chip">…</span>`;
+    const d = await thGet("/api/th/hosts").catch(() => ({ ok: false }));
+    const hosts = ((d && d.hosts) || []).filter(h => h.online !== false);
+    ntHost = ntHost || (d && d.default) || (hosts[0] || {}).id || "";
+    hostChips.innerHTML = hosts.map(h =>
+      `<span class="chip ${h.id === ntHost ? "active" : ""}" data-host="${escAttr(h.id)}">${escHtml(h.label || h.id)}</span>`
+    ).join("") || `<span class="chip">—</span>`;
+  }
+
+  const closeNewModal = () => { if (newModal) newModal.hidden = true; };
 
   if (newOpenBtn && newModal) {
     newOpenBtn.addEventListener("click", () => {
       newModal.hidden = false;
+      ntLoadHosts();
+      setTimeout(() => titleInput && titleInput.focus(), 60);
     });
   }
-  const closeNewModal = () => {
-    if (newModal) newModal.hidden = true;
-  };
   if (newCloseBtn) newCloseBtn.addEventListener("click", closeNewModal);
   if (newCancelBtn) newCancelBtn.addEventListener("click", closeNewModal);
+  if (newModal) newModal.addEventListener("click", e => { if (e.target === newModal) closeNewModal(); });
 
   if (agentGrid) {
-    agentGrid.addEventListener("click", (e) => {
-      const card = e.target.closest(".tmux-agent-card");
-      if (!card || !card.dataset.agent) return;
-      agentGrid.querySelectorAll(".tmux-agent-card").forEach(c => c.classList.remove("active"));
+    agentGrid.addEventListener("click", e => {
+      const card = e.target.closest(".nt-agent");
+      if (!card) return;
+      agentGrid.querySelectorAll(".nt-agent").forEach(c => c.classList.remove("active"));
       card.classList.add("active");
-      selectedAgent = card.dataset.agent;
+      ntAgent = card.dataset.agent;
     });
   }
-
-  if (cwdChips && cwdInput) {
-    cwdChips.addEventListener("click", (e) => {
-      const chip = e.target.closest(".chip");
-      if (!chip || !chip.dataset.path) return;
-      cwdChips.querySelectorAll(".chip").forEach(c => c.classList.remove("active"));
+  if (hostChips) {
+    hostChips.addEventListener("click", e => {
+      const chip = e.target.closest(".chip[data-host]");
+      if (!chip) return;
+      hostChips.querySelectorAll(".chip").forEach(c => c.classList.remove("active"));
       chip.classList.add("active");
-      cwdInput.value = chip.dataset.path;
+      ntHost = chip.dataset.host;
+    });
+  }
+  if (bodyInput) {
+    bodyInput.addEventListener("keydown", e => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); newSubmitBtn && newSubmitBtn.click(); }
     });
   }
 
   if (newSubmitBtn) {
     newSubmitBtn.addEventListener("click", async () => {
+      const title = (titleInput && titleInput.value.trim()) || "";
+      const body = (bodyInput && bodyInput.value.trim()) || "";
+      if (!title) { uiNotice(t("nt_need_title") || "请先写标题"); titleInput && titleInput.focus(); return; }
       newSubmitBtn.disabled = true;
       const origText = newSubmitBtn.innerHTML;
       newSubmitBtn.innerHTML = `${icon("wait", 14)} <span>...</span>`;
       try {
-        const payload = {
-          agent: selectedAgent,
-          cwd: cwdInput ? cwdInput.value.trim() : "",
-          prompt: promptInput ? promptInput.value.trim() : "",
-          name: nameInput ? nameInput.value.trim() : ""
-        };
-        const r = await fetch("/api/tmux/new", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-Svc-Token": BOOT.token || "" },
-          body: JSON.stringify(payload)
-        });
-        const res = await r.json();
-        if (res.ok) {
-          closeNewModal();
-          if (promptInput) promptInput.value = "";
-          if (nameInput) nameInput.value = "";
-          uiNotice(t("mm_goal_started", { s: res.session }) || `Session ${res.session} started`);
-          await fetchTmuxData(true);   // 强制刷新, 否则 4s 客户端缓存里没有新会话
-          await renderTmuxPage();
-          if (res.session) {
-            openTmuxSheet(res.session, res.target || `${res.session}:0.0`);
-          }
-        } else {
-          uiNotice(res.msg || "Failed to create session");
-        }
+        const r = await apiPost("/api/th/new", { title, body, agent: ntAgent, host: ntHost });
+        const d = await r.json().catch(() => ({ ok: false, msg: "bad json" }));
+        if (!d.ok) { uiNotice(d.msg || "创建失败"); return; }
+        closeNewModal();
+        if (titleInput) titleInput.value = "";
+        if (bodyInput) bodyInput.value = "";
+        TH.health = null;
+        if (d.needs_repo) uiNotice(`#${d.number} 已创建，仓库待确认 · 已在 Telegram 问你`);
+        else uiNotice(`#${d.number} 已派发 · ${ntAgent} @ ${ntHost || "默认机器"}`);
+        await thRenderTasks();
+        if (d.number) thOpenTask(d.number, true);
       } catch (err) {
         uiNotice("Error: " + err.message);
       } finally {
