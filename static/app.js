@@ -4163,7 +4163,7 @@ const PAGE_GROUPS = [
   ["#activity-page"],
   ["#tmux-panel"],
   ["#agents-page"],
-  ["#filters", "#network-page", "#tasks", "#svc-panel", "#cron-panel", "#logpage"],
+  ["#svc-head", "#svc-subnav", "#filters", "#network-page", "#tasks", "#svc-panel", "#cron-panel", "#logpage"],
 ];
 let pagesHomeOrder = null, pgWrappers = null, trackEl = null, headerHome = null;
 function placeHeader(mobile) {
@@ -8662,8 +8662,8 @@ const CAT_SELS = {
   goal: ["#tmux-panel"],
   agent: ["#agents-page"],
   manage: ["#agents-page"],
-  svc: ["#filters", "#network-page", "#tasks", "#svc-panel", "#cron-panel", "#logpage"],
-  network: ["#filters", "#network-page", "#tasks", "#svc-panel", "#cron-panel", "#logpage"],
+  svc: ["#svc-head", "#svc-subnav", "#filters", "#network-page", "#tasks", "#svc-panel", "#cron-panel", "#logpage"],
+  network: ["#svc-head", "#svc-subnav", "#filters", "#network-page", "#tasks", "#svc-panel", "#cron-panel", "#logpage"],
 };
 var curCat = "all";
 function setCat(c, save) {
