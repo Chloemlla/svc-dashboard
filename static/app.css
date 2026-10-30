@@ -7595,3 +7595,110 @@ body.is-static .mp-pv-status-pill.mono span:not(.mp-pv-status-dot) {
 .th-chip.primary { background: color-mix(in srgb, var(--c-ok) 16%, transparent); font-weight: 650; }
 .th-list { gap: 10px; }
 @media (max-width: 640px) { .th-card-side { min-width: 0; } }
+
+/* ================= 统一页面外壳（page shell）=================
+   所有页面共用：页头(page-head) + 分段子标签(page-subnav) + 工具行(page-tools) + 卡片(page-card)
+   规则集中在文件末尾，便于一次性调整整体观感。 */
+:root {
+  --page-pad-x: 18px;
+  --page-gap: 14px;
+  --card-radius: 14px;
+  --card-pad-y: 12px;
+  --card-pad-x: 14px;
+  --ctl-h: 32px;
+}
+
+.page-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin: 2px 0 var(--page-gap);
+}
+.page-head-main { min-width: 0; }
+.page-head h2 {
+  margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -.01em;
+  color: var(--text-title); display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.page-hint {
+  display: block; margin-top: 4px; font-size: 11.5px; line-height: 1.5;
+  color: var(--text-soft); font-weight: 400; max-width: 68ch;
+}
+.page-head .ghint { font-size: 11.5px; font-weight: 400; color: var(--text-soft); }
+.page-head-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+/* 分段子标签：与 Agent 页一致，一页只放 3-5 个，等宽不换行 */
+.page-subnav {
+  display: flex; gap: 4px; padding: 4px; margin: 0 0 var(--page-gap);
+  background: var(--bg-hover, rgba(128,128,128,.08));
+  border: 1px solid var(--border-faint); border-radius: 10px;
+  width: fit-content; max-width: 100%; overflow-x: auto;
+  -webkit-overflow-scrolling: touch; scrollbar-width: none;
+}
+.page-subnav::-webkit-scrollbar { display: none; }
+.page-subnav-btn {
+  display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px;
+  font-size: 13px; font-weight: 500; color: var(--text-soft);
+  background: transparent; border: 0; border-radius: 7px; cursor: pointer;
+  white-space: nowrap; flex: none; transition: background .15s ease, color .15s ease;
+}
+.page-subnav-btn:hover { color: var(--text-title); }
+.page-subnav-btn.active {
+  color: var(--chip-on-tx, #111); background: var(--chip-on-bg, #f2f2f2);
+  box-shadow: 0 1px 3px rgba(0,0,0,.2);
+}
+
+/* 工具行：筛选 chip + 搜索，高度统一 */
+.page-tools, .filters {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin: 0 0 12px; min-height: var(--ctl-h);
+}
+.filters .chip, .page-tools .chip { height: 28px; display: inline-flex; align-items: center; }
+
+/* 卡片统一：活动 / 网络 / 任务 / 会话 */
+.act-card, .ts-card, .th-card, .mcard, .gcard, .tmux-session-card {
+  border-radius: var(--card-radius);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.th-card { padding: var(--card-pad-y) var(--card-pad-x); }
+
+/* 页面留白与移动端底部安全区 */
+#activity-page, #network-page, #agents-page, #svc-panel, #cron-panel { padding: var(--page-pad-x); }
+@media (max-width: 700px) {
+  :root { --page-pad-x: 13px; --page-gap: 12px; --card-radius: 12px; }
+  #activity-page, #network-page, #agents-page, #svc-panel, #cron-panel {
+    padding: var(--page-pad-x) var(--page-pad-x) calc(72px + env(safe-area-inset-bottom, 0px));
+  }
+  .page-head h2 { font-size: 16px; }
+  .page-hint { font-size: 11px; }
+  .page-subnav { width: 100%; }
+  .page-subnav-btn { flex: 1 1 auto; justify-content: center; padding: 7px 8px; font-size: 12px; }
+}
+
+/* ---- 统一外壳 v2：更安静的分段控件、更紧的纵向节奏 ---- */
+.agent-subnav-btn.active, .page-subnav-btn.active {
+  color: var(--text-title);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  box-shadow: none;
+  font-weight: 600;
+}
+.agent-subnav-btn, .page-subnav-btn { padding: 5px 11px; font-size: 12.5px; }
+.agent-subnav, .page-subnav { padding: 3px; gap: 2px; border-radius: 10px; }
+
+/* 全局工具入口（Magpie / VNC …）：窄屏单行横向滚动，不再换行挤占首屏 */
+@media (max-width: 700px) {
+  .toolchips, .tool-chips, #toolchips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .toolchips::-webkit-scrollbar, .tool-chips::-webkit-scrollbar, #toolchips::-webkit-scrollbar { display: none; }
+  .page-head { margin-bottom: 10px; }
+  .page-hint { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .filters .chip, .page-tools .chip { height: 26px; font-size: 11.5px; padding: 0 10px; }
+  #activity-page, #network-page, #agents-page { padding-top: 12px; }
+}
+
+/* 加载态：骨架行，避免大片空白看起来像没加载 */
+.th-skeleton { display: grid; gap: 10px; }
+.th-skeleton i {
+  display: block; height: 74px; border-radius: var(--card-radius);
+  background: linear-gradient(100deg, var(--bg-panel) 30%, var(--bg-hover) 50%, var(--bg-panel) 70%);
+  background-size: 220% 100%; animation: thShimmer 1.2s ease-in-out infinite;
+}
+@keyframes thShimmer { from { background-position: 140% 0; } to { background-position: -40% 0; } }

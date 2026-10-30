@@ -130,13 +130,16 @@ try{var _tm=localStorage.getItem("svc-theme");if(_tm==="dark"||_tm==="light")doc
 {{TOOLCHIPS}}
 {{GOALS_PANEL}}
 <div class="gpanel" id="activity-page" hidden>
-  <div class="act-header">
-    <h2>{{T:act_title}} <span class="ghint">{{T:act_hint}}</span></h2>
+  <div class="page-head">
+    <div class="page-head-main">
+      <h2>{{T:act_title}}</h2>
+      <span class="page-hint">{{T:act_hint}}</span>
+    </div>
   </div>
-  <div class="agent-subnav" id="th-subtabs">
-    <button class="agent-subnav-btn active" data-th="events" type="button">{{ICO:activity:13}} <span>{{T:th_tab_events}}</span></button>
-    <button class="agent-subnav-btn" data-th="issues" type="button">{{ICO:check:13}} <span>{{T:th_tab_tasks}}</span></button>
-    <button class="agent-subnav-btn" data-th="runs" type="button">{{ICO:term:13}} <span>{{T:th_tab_logs}}</span></button>
+  <div class="page-subnav agent-subnav" id="th-subtabs">
+    <button class="page-subnav-btn agent-subnav-btn active" data-th="events" type="button">{{ICO:activity:13}} <span>{{T:th_tab_events}}</span></button>
+    <button class="page-subnav-btn agent-subnav-btn" data-th="issues" type="button">{{ICO:check:13}} <span>{{T:th_tab_tasks}}</span></button>
+    <button class="page-subnav-btn agent-subnav-btn" data-th="runs" type="button">{{ICO:term:13}} <span>{{T:th_tab_logs}}</span></button>
   </div>
   <div class="filters act-filters" id="act-filters">
     <span class="chip active" data-af="all" role="button" tabindex="0">{{T:act_all}} <span id="n-act-all"></span></span>
@@ -153,6 +156,16 @@ try{var _tm=localStorage.getItem("svc-theme");if(_tm==="dark"||_tm==="light")doc
   <div id="th-runs" class="th-pane" hidden></div>
   <div id="th-log" class="th-pane" hidden></div>
 </div>
+<div class="page-head" id="svc-head">
+  <div class="page-head-main">
+    <h2>{{T:tab_svc}}</h2>
+    <span class="page-hint">{{T:svc_page_hint}}</span>
+  </div>
+</div>
+<div class="page-subnav" id="svc-subnav">
+  <button class="page-subnav-btn active" data-sv="svc" type="button">{{ICO:file:13}} <span>{{T:tab_svc}}</span></button>
+  <button class="page-subnav-btn" data-sv="cron" type="button">{{ICO:retry:13}} <span>{{T:tl_cron_title}}</span></button>
+</div>
 <div class="filters" id="filters">
   <span class="chip" data-f="user" role="button" tabindex="0">{{T:chip_user}} <span id="n-user"></span></span>
   <span class="chip" data-f="web" role="button" tabindex="0">{{T:chip_web}} <span id="n-web"></span></span>
@@ -167,9 +180,12 @@ try{var _tm=localStorage.getItem("svc-theme");if(_tm==="dark"||_tm==="light")doc
   <span class="chip" data-f="manage" role="button" tabindex="0">{{T:chip_manage}} <span id="n-manage"></span></span>
 </div>
 <div class="gpanel" id="network-page" hidden>
-  <div class="ts-header">
-    <h2>{{T:ts_title}} <span class="ghint">{{T:ts_hint}}</span></h2>
-    <div class="ts-header-actions">
+  <div class="page-head ts-header">
+    <div class="page-head-main">
+      <h2>{{T:ts_title}}</h2>
+      <span class="page-hint">{{T:ts_hint}}</span>
+    </div>
+    <div class="page-head-actions ts-header-actions">
       <button class="btn-ts-action" id="btn-ts-netcheck" title="{{T:ts_netcheck}}">
         {{ICO:activity:13}} <span>{{T:ts_netcheck}}</span>
       </button>
@@ -210,9 +226,12 @@ try{var _tm=localStorage.getItem("svc-theme");if(_tm==="dark"||_tm==="light")doc
   </table>
 </div>
 <div class="gpanel" id="agents-page" hidden>
-  <div class="agent-header">
-    <h2>{{T:agent_hub_title}} <span class="ghint">{{T:agent_hub_hint}}</span></h2>
-    <div class="agent-header-actions">
+  <div class="page-head agent-header">
+    <div class="page-head-main">
+      <h2>{{T:agent_hub_title}}</h2>
+      <span class="page-hint">{{T:agent_hub_hint}}</span>
+    </div>
+    <div class="page-head-actions agent-header-actions">
       <a class="btn-agent-top btn-magpie-portal" id="btn-agent-magpie" href="#" target="_blank" rel="noopener" title="{{T:mp_open_console}}" hidden>
         {{ICO:ext:13}} <span>Magpie ↗</span>
       </a>

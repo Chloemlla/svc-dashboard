@@ -8928,7 +8928,7 @@ function thEnsureBase() {
 
 async function thRenderTasks() {
   const box = $("th-tasks"); if (!box) return;
-  box.innerHTML = `<div class="gempty">${escHtml(t("th_loading"))}</div>`;
+  box.innerHTML = `<div class="th-skeleton"><i></i><i></i><i></i></div>`;
   const d = await thGet(`/api/th/issues?mode=${encodeURIComponent(TH.mode)}&q=${encodeURIComponent(TH.q)}`);
   TH.issues = d;
   if (d.ok === false) { box.innerHTML = `<div class="gempty t-red">${escHtml(d.msg || "无法读取任务")}</div>`; return; }
@@ -9027,7 +9027,7 @@ async function thSetState(number, state) {
 
 async function thRenderRuns() {
   const box = $("th-runs"); if (!box) return;
-  box.innerHTML = `<div class="gempty">${escHtml(t("th_loading"))}</div>`;
+  box.innerHTML = `<div class="th-skeleton"><i></i><i></i><i></i></div>`;
   const d = await thGet("/api/th/runs?limit=40");
   TH.runs = d;
   if (d.ok === false) { box.innerHTML = `<div class="gempty t-red">${escHtml(d.msg || "无法读取执行记录")}</div>`; return; }
@@ -9079,3 +9079,28 @@ function thInitTabs() {
   bar.dataset.wired = "1";
   bar.querySelectorAll("[data-th]").forEach(el => el.addEventListener("click", () => thSetTab(el.dataset.th)));
 }
+
+// 服务页：服务 / 定时 / 日志 三个小 tab（与活动页同一套 subnav）
+function initSvcSubnav() {
+  const bar = $("svc-subnav");
+  if (!bar || bar.dataset.wired) return;
+  bar.dataset.wired = "1";
+  const panes = { svc: ["svc-panel", "filters"], cron: ["cron-panel"] };
+  const all = new Set(Object.values(panes).flat());
+  bar.addEventListener("click", e => {
+    const btn = e.target.closest(".page-subnav-btn");
+    if (!btn || !btn.dataset.sv) return;
+    const want = btn.dataset.sv;
+    bar.querySelectorAll(".page-subnav-btn").forEach(b => b.classList.toggle("active", b === btn));
+    all.forEach(id => {
+      const el = $(id);
+      if (!el) return;
+      const show = (panes[want] || []).includes(id);
+      el.hidden = !show;
+      el.style.display = show ? "" : "none";
+    });
+    if (want === "cron" && typeof cronLoad === "function") cronLoad();
+  });
+}
+document.addEventListener("DOMContentLoaded", initSvcSubnav);
+setTimeout(initSvcSubnav, 800);

@@ -219,3 +219,21 @@ TaskHub 引擎（`taskhub.service`，只监听 `127.0.0.1:8096`）的能力，�
 - 任务数据仍由引擎持有（`~/.local/state/taskhub/taskhub.db`）；svc-dashboard 不写任务库。
 - 修改后验证：`curl -s localhost/api/th/health`，再在浏览器打开 `/#cat=activity` → 任务，
   确认 26 条列表、日志面板、派发面板三处都可用（手机 390 宽无横向溢出）。
+
+## 页面外壳规范（所有页面统一）
+
+功能越来越多，页面不再各写一套头/筛选/卡片，统一成四段式；改样式只动 `static/app.css`
+末尾的「统一页面外壳」块，不要在页面内部临时发明新控件。
+
+1. **页头 `.page-head`**：`h2`（17px/700）+ `.page-hint`（11.5px 灰，最多两行）+ 可选
+   `.page-head-actions` 按钮组。不要再把说明塞进 `h2` 里的 `ghint` 硬拼一行。
+2. **分段子标签 `.page-subnav` + `.page-subnav-btn`**：一个页面 2–5 个，灰色底槽 + 轻量
+   选中块（`--bg-elev` + 1px 边框，不用纯白块压过内容）。窄屏等分、可横向滚动。
+3. **工具行 `.filters` / `.page-tools`**：筛选 chip 与搜索框同高（窄屏 26px / 桌面 28px），
+   与列表间距 12px。
+4. **卡片 `.act-card|.ts-card|.th-card|.mcard|.gcard`**：统一 `--card-radius` + 1px 边框 +
+   `--bg-panel`，内边距 12/14。
+5. 移动端：`--page-pad-x: 13px`，页面底部留 `72px + safe-area`，固定导航不再压住最后一张卡。
+
+已落地：活动（记录/任务/日志）、服务（服务/定时任务）、Agent（4 个运行时子页）、Tmux、
+网络页头。新增页面照此四段式接，别再写 `.xxx-header` 私有样式。

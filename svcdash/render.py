@@ -254,9 +254,10 @@ def _lite_sysbar(lang):
 
 _LITE_TMUX = (
     '<div class="gpanel" id="tmux-panel">'
-    '<div class="tmux-header">'
-    '<h2>{{T:tmux_title}} <span class="ghint">{{T:tmux_hint}}</span></h2>'
-    '<div class="tmux-header-actions">'
+    '<div class="page-head tmux-header">'
+    '<div class="page-head-main"><h2>{{T:tmux_title}}</h2>'
+    '<span class="page-hint">{{T:tmux_hint}}</span></div>'
+    '<div class="page-head-actions tmux-header-actions">'
     '<button class="btn-ts-action btn-tmux-primary" id="btn-tmux-new-open" type="button">'
     '{{ICO:term:13}} <span>{{T:tmux_btn_new}}</span>'
     '</button>'
