@@ -7,6 +7,9 @@ LANG_KEYS = ("zh", "en", "ja")
 
 L10N = {
     "zh": {
+        "th_timeline": '执行时间线',
+        "th_issue_body": 'Issue 内容',
+        "th_static_note": '公開スナップショットはタスクのタイトルと概要のみ表示します。本文・ブランチ・実行ログ・操作ボタンは配信しません。',
         'cl_journal': 'journalctl 占用超 200M 的部分',
         'cl_apt': 'apt 下载缓存(.deb)',
         'cl_tmp_old': '/tmp 超 7 天旧文件({n} 项, 已排除 in-use)',
@@ -603,6 +606,9 @@ L10N = {
         "locked_toast": "已锁定：自动刷新暂停", "unlocked_toast": "已解锁：自动刷新恢复",
     },
     "en": {
+        "th_timeline": 'Timeline',
+        "th_issue_body": 'Issue',
+        "th_static_note": '公開スナップショットはタスクのタイトルと概要のみ表示します。本文・ブランチ・実行ログ・操作ボタンは配信しません。',
         'cl_journal': 'journalctl usage over 200M',
         'cl_apt': 'apt download cache (.deb)',
         'cl_tmp_old': '/tmp files older than 7 days ({n}, in-use excluded)',
@@ -1197,6 +1203,9 @@ L10N = {
         "locked_toast": "Locked: auto refresh paused", "unlocked_toast": "Unlocked: auto refresh resumed",
     },
     "ja": {
+        "th_timeline": '実行タイムライン',
+        "th_issue_body": 'Issue 内容',
+        "th_static_note": '公開スナップショットはタスクのタイトルと概要のみ表示します。本文・ブランチ・実行ログ・操作ボタンは配信しません。',
         'cl_journal': 'journalctl 使用量 200M 超の部分',
         'cl_apt': 'apt ダウンロードキャッシュ(.deb)',
         'cl_tmp_old': '/tmp の 7 日超ファイル({n} 件, in-use 除外)',

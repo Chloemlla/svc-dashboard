@@ -8915,7 +8915,7 @@ function tmuxInitSubnav() {
 /* GitHub 没有 webhook 到内网，所以列表靠轮询保持新鲜：
    45s 一次 gh issue list，只有数量/状态/run 发生变化才重绘，避免打扰正在看的详情。 */
 function thStartWatcher() {
-  if (TH.watch) return;
+  if (TH.watch || BOOT.static) return;
   TH.watch = setInterval(async () => {
     if (document.hidden || TH.busy) return;
     const pane = $("tmux-view-tasks");
@@ -8963,6 +8963,30 @@ function thPercent(run) {
 /* ---------------- 任务列表：正在跑 / 待派发 / 已完成 ---------------- */
 async function thRenderTasks(silent) {
   const box = $("th-tasks"); if (!box) return;
+  if (BOOT.static) {
+    // 公开快照：列表只有标题 + 摘要，没有任何按钮；详情用马赛克占位。
+    // 正文/分支/日志/编号在导出阶段就没有采集，所以这里没有可泄露的数据。
+    const items = (BOOT.thTasks && BOOT.thTasks.items) || [];
+    box.innerHTML = items.length ? `
+      <div class="th-group">
+        <div class="th-group-head"><span class="th-group-title">${escHtml(t("th_open"))}</span>
+          <span class="th-group-n">${items.length}</span></div>
+        <div class="th-cards">${items.map((it, i) => `
+          <div class="th-card th-row th-static-row" data-th-static="${i}" role="button" tabindex="0">
+            <div class="th-title">${escHtml(it.title)}</div>
+            ${it.excerpt ? `<div class="th-excerpt">${escHtml(it.excerpt)}</div>` : ""}
+          </div>`).join("")}</div>
+      </div>` : `<div class="gempty">${escHtml(t("th_empty"))}</div>`;
+    box.querySelectorAll("[data-th-static]").forEach(el => el.addEventListener("click", () => {
+      box.querySelectorAll(".th-row").forEach(x => x.classList.toggle("selected", x === el));
+      thStaticDetail(items[Number(el.dataset.thStatic)] || {});
+    }));
+    if (items.length && window.matchMedia("(min-width: 701px)").matches) {
+      box.querySelector(".th-row")?.classList.add("selected");
+      thStaticDetail(items[0]);
+    }
+    return;
+  }
   const keep = silent ? TH.taskView : null;
   const wide = window.matchMedia("(min-width: 701px)").matches;
   box.hidden = false;
@@ -9027,6 +9051,23 @@ async function thRenderTasks(silent) {
     if (kind === "cancel") thCancel(el.dataset.run);
     if (kind === "resume") thReply(el.dataset.run, n);
   }));
+}
+
+function thStaticDetail(it) {
+  const det = $("th-detail"); if (!det) return;
+  const line = w => `<div class="th-mask-line" style="width:${w}%"></div>`;
+  det.innerHTML = `
+    <div class="th-detail-bar">
+      <div class="th-bar-title"><span class="th-bar-name is-masked">${escHtml(it.title || "")}</span></div>
+    </div>
+    <div class="th-detail-body">
+      <div class="th-static-tag">${escHtml(t("th_static_note"))}</div>
+      ${line(34)}${line(68)}${line(52)}
+      <div class="th-section-title">${escHtml(t("th_timeline"))}</div>
+      ${line(44)}${line(60)}${line(38)}
+      <div class="th-section-title">${escHtml(t("th_issue_body"))}</div>
+      ${line(92)}${line(86)}${line(74)}${line(90)}${line(58)}
+    </div>`;
 }
 
 function thTaskCard(it, kind) {

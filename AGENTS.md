@@ -152,6 +152,10 @@ HTTP 层：HTTP/1.1 keep-alive + gzip + 静态 ETag/304（svcdash/handler.py）�
 - 状态 hash 位于 `~/.cache/svc-dashboard-static/last-published.sha256`。
 - 默认自定义域名为 `svc.iamcheyan.com`，可用 `SVC_DASHBOARD_CNAME` 覆盖。
 - 公开仓库的提交评论、文件变更路径和仓库轨迹按用户要求保留；Goal/Agent 对话、Tmux 标题/路径/终端输出仍脱敏。
+- 静态任务页（公开）：只发布 issue 标题 + 摘要，且按字段脱敏（`sanitize_text`：密钥/家目录/内网 IP）；
+  不采集正文、分支、机器、条目编号与执行日志。页面不渲染任何操作按钮，右侧详情用马赛克占位条，
+  不做"发布后 CSS 模糊"——模糊在开发者工具里可一键去掉，不能当隐私边界。带 `private` / `secret` /
+  `no-publish` 标签的 issue 直接跳过。列表与详情都不发起任何 API 请求（静态版无 `/api/th/*`）。
 - 静态服务页不提供详情弹窗；启动命令显示为 `[命令已隐藏]`，防止公开命令参数和工作目录。
 - 静态 Agent 页的模型“测试”不执行真实请求，显示为静态快照提示；真实模型测试只能在需要登录/令牌的私有 dashboard 上执行。
 - Agent 详情只在公开静态快照中走安全视图：二进制路径、进程 PID/命令、MCP 命令、个人技能/任务名称、提示词和平台账户标识会隐藏或泛化；版本、模型、资源占用、连接状态与调度状态保留。私有实时 `/api/agentdetail` 保留完整本机详情；`export.py` 生成静态 `BOOT.agentDetails` 时显式使用 `for_public=True`。
