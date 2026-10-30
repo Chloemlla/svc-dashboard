@@ -8905,7 +8905,7 @@ function thStateChip(run) {
 
 function thSetTab(tab) {
   TH.tab = tab;
-  document.querySelectorAll("#th-subtabs .chip").forEach(c => c.classList.toggle("active", c.dataset.th === tab));
+  document.querySelectorAll("#th-subtabs .agent-subnav-btn").forEach(c => c.classList.toggle("active", c.dataset.th === tab));
   const show = { events: "activity-body", issues: "th-tasks", runs: "th-runs", log: "th-log" }[tab] || "activity-body";
   ["activity-body", "th-tasks", "th-runs", "th-log"].forEach(id => {
     const el = $(id); if (el) el.hidden = id !== show;

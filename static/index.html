@@ -133,10 +133,10 @@ try{var _tm=localStorage.getItem("svc-theme");if(_tm==="dark"||_tm==="light")doc
   <div class="act-header">
     <h2>{{T:act_title}} <span class="ghint">{{T:act_hint}}</span></h2>
   </div>
-  <div class="filters th-subtabs" id="th-subtabs">
-    <span class="chip active" data-th="events" role="button" tabindex="0">{{T:th_tab_events}}</span>
-    <span class="chip" data-th="issues" role="button" tabindex="0">{{T:th_tab_tasks}}</span>
-    <span class="chip" data-th="runs" role="button" tabindex="0">{{T:th_tab_logs}}</span>
+  <div class="agent-subnav" id="th-subtabs">
+    <button class="agent-subnav-btn active" data-th="events" type="button">{{ICO:activity:13}} <span>{{T:th_tab_events}}</span></button>
+    <button class="agent-subnav-btn" data-th="issues" type="button">{{ICO:check:13}} <span>{{T:th_tab_tasks}}</span></button>
+    <button class="agent-subnav-btn" data-th="runs" type="button">{{ICO:term:13}} <span>{{T:th_tab_logs}}</span></button>
   </div>
   <div class="filters act-filters" id="act-filters">
     <span class="chip active" data-af="all" role="button" tabindex="0">{{T:act_all}} <span id="n-act-all"></span></span>

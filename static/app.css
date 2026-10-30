@@ -7548,7 +7548,6 @@ body.is-static .mp-pv-status-pill.mono span:not(.mp-pv-status-dot) {
 
 
 /* ===== TaskHub: 活动页内的 任务 / 日志 ===== */
-.th-subtabs { margin-bottom: 10px; }
 .th-filters { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
 .th-search { flex: 1 1 160px; min-width: 120px; background: var(--bg-input); border: 1px solid var(--border);
   border-radius: 999px; padding: 6px 12px; color: var(--text); font-size: 12.5px; outline: none; }
