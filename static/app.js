@@ -3751,7 +3751,7 @@ function stopTmuxSheetLive() {
   const titleInput = $("nt-title");
   const bodyInput = $("nt-body");
 
-  let ntAgent = "omp";
+  let ntAgent = "hermes";
   let ntHost = "";
 
   async function ntLoadHosts() {
@@ -9399,7 +9399,7 @@ async function thOpenTask(number, keepScroll) {
   // 顶部操作动作组
   const actions = [
     activeRun
-      ? `<button class="th-btn" type="button" data-th-act="wake" data-sess="${escAttr(latest ? latest.tmux_session : "")}">⚡ 唤醒推进</button>` : "",
+      ? `<button class="th-btn th-btn-accent" type="button" data-th-act="wake" data-sess="${escAttr(latest ? latest.tmux_session : "")}">⚡ 唤醒推进</button>` : "",
     activeRun
       ? `<button class="th-btn th-btn-danger" type="button" data-th-act="cancel" data-run="${escAttr(latest ? latest.id : "")}" data-num="${issue.number}">停止</button>` : "",
     isClosed
@@ -9412,8 +9412,7 @@ async function thOpenTask(number, keepScroll) {
   const metaBits = [
     d.repo || "",
     latest ? thHostName(latest) : "",
-    latest && latest.branch ? latest.branch : "",
-    latest && latest.tmux_session ? `tmux: ${latest.tmux_session}` : ""
+    latest && latest.branch ? latest.branch : ""
   ].filter(Boolean).map(x => `<span>${escHtml(x)}</span>`).join('<i class="th-head-sep"></i>');
 
   // 多 Tab 控制区（自适应默认值）
@@ -9428,7 +9427,7 @@ async function thOpenTask(number, keepScroll) {
         <button class="th-icon-btn th-back" type="button" data-th-back="1" aria-label="Back">←</button>
         <span class="th-badge is-${escAttr(stateKey)}">${escHtml(stateText)}</span>
         <span class="th-head-num">#${escHtml(String(issue.number || ""))}</span>
-        ${metaBits ? `<i class="th-head-sep"></i>${metaBits}` : ""}
+        ${metaBits ? `<span class="th-head-meta"><i class="th-head-sep"></i>${metaBits}</span>` : ""}
         <a class="th-icon-btn th-head-link" href="${escAttr(issue.url || "#")}" target="_blank" rel="noopener" title="GitHub" aria-label="GitHub">↗</a>
       </div>
       <h3 class="th-head-title">${escHtml(issue.title || "")}</h3>

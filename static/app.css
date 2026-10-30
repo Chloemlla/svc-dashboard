@@ -7828,6 +7828,14 @@ body.is-static .mp-pv-status-pill.mono span:not(.mp-pv-status-dot) {
   --th-pad-y: 12px;
   --th-radius: 12px;
   --th-line: color-mix(in srgb, var(--border) 88%, transparent);
+  /* 面板表面色：sticky 页头必须用它，才能和 .gpanel 无缝衔接 */
+  --th-surface: var(--bg-elev);
+  /* 页头下方的投影：深色里只是压住滚上来的内容，浅色里必须更淡，否则像一条粗线 */
+  --th-head-shadow: 0 16px 18px -18px rgba(0, 0, 0, .6);
+}
+:root[data-theme="light"] #tmux-panel { --th-head-shadow: 0 10px 14px -14px rgba(16, 24, 40, .16); }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) #tmux-panel { --th-head-shadow: 0 10px 14px -14px rgba(16, 24, 40, .16); }
 }
 
 /* ---- 左列 ---- */
@@ -8047,26 +8055,38 @@ body.is-static #tmux-panel .th-detail-body { padding-top: 2px; }
 }
 .th-btn-primary:hover { background: color-mix(in srgb, var(--accent) 88%, #fff); color: #fff; }
 .th-btn-primary:active { background: color-mix(in srgb, var(--accent) 88%, #000); }
+/* 运行中任务的主操作（唤醒推进）：淡蓝底 + 蓝字，比实心胶囊安静，但仍是唯一的强调色 */
+.th-btn-accent { color: var(--accent-blue-tx); background: var(--accent-blue-bg); border-color: var(--accent-blue-bd); }
+.th-btn-accent:hover { background: var(--accent-blue-hover); border-color: var(--accent-blue-bd); color: var(--accent-blue-tx); }
+.th-btn-accent:active { background: var(--accent-blue-bd); }
 .th-btn-danger { color: var(--c-red); }
 .th-btn-danger:hover { background: color-mix(in srgb, var(--c-red) 12%, transparent); color: var(--c-red); }
 .th-btn-sm { height: 26px; padding: 0 9px; font-size: 11.5px; border-radius: 7px; }
 .th-btn-sm.th-btn-primary { height: 26px; padding: 0 13px; border-radius: 999px; box-shadow: none; }
 
-/* ---- 详情页头 ---- */
-#tmux-panel .th-head { padding-bottom: 14px; margin-bottom: 4px; border-bottom: 1px solid var(--th-line); }
-#tmux-panel .th-head-line {
-  display: flex; align-items: center; gap: 7px; flex-wrap: wrap; min-width: 0;
-  font-size: 11.5px; color: var(--text-soft);
+/* ---- 详情页头 ----
+   元信息一行（状态徽标 + #编号 + 仓库/机器/分支 … GitHub），标题独占一行，操作行在下方。
+   桌面下整块 sticky 在右列里，所以底色必须和面板表面同色（--th-surface = --bg-elev）；
+   用页面底色会糊出一块比面板更黑的硬边矩形，背景又没填充，滚动时最扎眼。 */
+#tmux-panel .th-head {
+  position: relative;
+  padding: 0 0 13px; margin: 0 0 4px;
+  border-bottom: 1px solid var(--th-line);
 }
-#tmux-panel .th-head-num { font-weight: 600; color: var(--text-ghost); font-variant-numeric: tabular-nums; }
-#tmux-panel .th-head-line > span:not(.th-badge):not(.th-head-num) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#tmux-panel .th-head-line {
+  display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; min-width: 0;
+  font-size: 11.5px; line-height: 1.4; color: color-mix(in srgb, var(--text) 88%, transparent);
+}
+#tmux-panel .th-head-num { flex: 0 0 auto; font-weight: 650; color: var(--text-ghost); font-variant-numeric: tabular-nums; }
+#tmux-panel .th-head-meta { display: flex; align-items: center; gap: 7px; min-width: 0; overflow: hidden; }
+#tmux-panel .th-head-meta > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #tmux-panel .th-head-sep { flex: 0 0 auto; width: 2.5px; height: 2.5px; border-radius: 50%; background: var(--text-ghost); opacity: .55; }
 #tmux-panel .th-head-title {
-  margin: 10px 0 0; max-width: 42ch;
-  font-size: 21px; font-weight: 700; line-height: 1.28;
-  letter-spacing: -.015em; color: var(--text-title); overflow-wrap: anywhere;
+  margin: 8px 0 0; max-width: 46ch;
+  font-size: 20px; font-weight: 700; line-height: 1.32;
+  letter-spacing: -.012em; color: var(--text-title); overflow-wrap: anywhere;
 }
-#tmux-panel .th-head-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 13px; }
+#tmux-panel .th-head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 
 #tmux-panel .th-icon-btn {
   display: inline-flex; align-items: center; justify-content: center;
@@ -8077,7 +8097,11 @@ body.is-static #tmux-panel .th-detail-body { padding-top: 2px; }
 }
 #tmux-panel .th-icon-btn:hover { background: var(--bg-hover); color: var(--text-title); }
 #tmux-panel .th-icon-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
-#tmux-panel .th-head-link { margin-left: auto; }
+#tmux-panel .th-head-link {
+  flex: 0 0 auto; margin-left: auto;
+  border-color: var(--th-line); color: var(--text-soft);
+}
+#tmux-panel .th-head-link:hover { border-color: var(--border); color: var(--text-title); }
 #tmux-panel .th-back { display: none; }
 
 /* 状态徽标：小圆点 + 文案，异常态才染色 */
@@ -8102,7 +8126,8 @@ body.is-static #tmux-panel .th-detail-body { padding-top: 2px; }
 #tmux-panel .th-badge.is-pending { color: var(--text-soft); }
 
 /* ---- 正文：文档式分节（不套卡片边框，靠留白与细线分节） ---- */
-#tmux-panel .th-detail-body { padding-top: 14px; }
+#tmux-panel .th-detail-body { padding-top: 12px; }
+#tmux-panel .th-detail-body > *:first-child { margin-top: 0; }
 #tmux-panel .th-sec { padding-top: 18px; margin-top: 18px; border-top: 1px solid var(--th-line); }
 #tmux-panel .th-sec:first-child { padding-top: 0; margin-top: 0; border-top: 0; }
 #tmux-panel .th-sec-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -8175,19 +8200,33 @@ body.is-static #tmux-panel .th-detail-body { padding-top: 2px; }
   }
   #tmux-panel .th-head {
     position: sticky; top: 0; z-index: 3;
-    background: color-mix(in srgb, var(--bg) 94%, transparent);
-    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+    padding-top: 12px;
+    /* 与面板同色 + 下方一道极浅的投影：内容从页头底下滚过时才看得出来 */
+    background: var(--th-surface);
+    box-shadow: var(--th-head-shadow);
   }
   #tmux-panel .th-detail-body { max-width: 900px; }
 }
 
 @media (max-width: 700px) {
   #tmux-panel .th-back { display: inline-flex; }
-  #tmux-panel .th-head { padding-bottom: 12px; }
-  #tmux-panel .th-head-title { font-size: 18px; margin-top: 8px; }
-  #tmux-panel .th-head-actions { width: 100%; gap: 6px; }
-  #tmux-panel .th-head-actions .th-btn { flex: 1 1 auto; height: 34px; font-size: 12.5px; border-radius: 9px; }
-  #tmux-panel .th-head-actions .th-btn-primary { flex: 1.6 1 118px; border-radius: 999px; }
+  #tmux-panel .th-head { padding: 2px 0 12px; }
+  /* 手机一行放不下：元信息独占第二行，不再把仓库/机器/分支挤成省略号 */
+  #tmux-panel .th-head-line { flex-wrap: wrap; row-gap: 6px; }
+  #tmux-panel .th-head-link { order: 1; }
+  #tmux-panel .th-head-meta { order: 2; flex: 1 0 100%; margin-top: -1px; }
+  #tmux-panel .th-head-meta > .th-head-sep:first-child { display: none; }
+  #tmux-panel .th-head-meta > span:first-child { flex: 0 0 auto; }
+  #tmux-panel .th-head-title { font-size: 18px; margin-top: 7px; }
+  #tmux-panel .th-head-actions { width: 100%; gap: 6px; margin-top: 11px; }
+  /* 等宽三段，三颗动作按钮才像一排控件而不是散落的文字 */
+  #tmux-panel .th-head-actions .th-btn {
+    flex: 1 1 0; height: 34px; font-size: 12.5px; border-radius: 9px;
+    background: var(--bg-hover); border-color: transparent; color: var(--text);
+  }
+  #tmux-panel .th-head-actions .th-btn-primary { flex: 1.6 1 118px; border-radius: 999px; background: var(--accent); color: #fff; }
+  #tmux-panel .th-head-actions .th-btn-accent { background: var(--accent-blue-bg); border-color: var(--accent-blue-bd); color: var(--accent-blue-tx); }
+  #tmux-panel .th-head-actions .th-btn-danger { color: var(--c-red); }
   #tmux-panel .th-run-row { grid-template-columns: 1fr 1fr auto; }
   #tmux-panel .th-run-stage { display: none; }
 }
