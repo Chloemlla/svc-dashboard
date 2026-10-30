@@ -57,6 +57,7 @@ try{var _tm=localStorage.getItem("svc-theme");if(_tm==="dark"||_tm==="light")doc
   <canvas id="chart" height="140"></canvas>
   <div id="chart-empty">{{T:chart_empty}}</div>
 </div>
+<div class="hp-vms-grid" id="hp-vms-grid"></div>
 <div class="hp-portal-grid" id="hp-portal-grid">
   <!-- 1. 近期动态概览 -->
   <div class="gpanel hp-portal-card" id="hp-card-activity">
@@ -132,6 +133,11 @@ try{var _tm=localStorage.getItem("svc-theme");if(_tm==="dark"||_tm==="light")doc
   <div class="act-header">
     <h2>{{T:act_title}} <span class="ghint">{{T:act_hint}}</span></h2>
   </div>
+  <div class="agent-subnav" id="th-subtabs">
+    <button class="agent-subnav-btn active" data-th="events" type="button">{{ICO:activity:13}} <span>{{T:th_tab_events}}</span></button>
+    <button class="agent-subnav-btn" data-th="issues" type="button">{{ICO:check:13}} <span>{{T:th_tab_tasks}}</span></button>
+    <button class="agent-subnav-btn" data-th="runs" type="button">{{ICO:term:13}} <span>{{T:th_tab_logs}}</span></button>
+  </div>
   <div class="filters act-filters" id="act-filters">
     <span class="chip active" data-af="all" role="button" tabindex="0">{{T:act_all}} <span id="n-act-all"></span></span>
     <span class="chip" data-af="commit" role="button" tabindex="0">{{T:act_commits}} <span id="n-act-commit"></span></span>
@@ -143,6 +149,9 @@ try{var _tm=localStorage.getItem("svc-theme");if(_tm==="dark"||_tm==="light")doc
     <span class="chip act-auto-publish-toggle" id="act-auto-publish-toggle" role="button" tabindex="0">{{T:act_show_auto}}</span>
   </div>
   <div id="activity-body"><div class="gempty">{{T:a_loading}}</div></div>
+  <div id="th-tasks" class="th-pane" hidden></div>
+  <div id="th-runs" class="th-pane" hidden></div>
+  <div id="th-log" class="th-pane" hidden></div>
 </div>
 <div class="filters" id="filters">
   <span class="chip" data-f="user" role="button" tabindex="0">{{T:chip_user}} <span id="n-user"></span></span>
@@ -384,6 +393,34 @@ try{var _tm=localStorage.getItem("svc-theme");if(_tm==="dark"||_tm==="light")doc
     <span class="chip" data-adtab="cron">{{T:agent_tab_cron}} <span id="ad-cron-count"></span></span>
   </div>
   <div class="agent-sheet-body" id="agent-sheet-body">
+    <div class="gempty">{{T:st_loading}}</div>
+  </div>
+</div>
+<!-- PVE 虚拟机详情全屏滑层 / 面板 -->
+<div class="vm-sheet" id="vm-detail-sheet" hidden>
+  <div class="vm-sheet-top">
+    <span class="traj-iconbtn" id="vm-sheet-back" role="button" tabindex="0" aria-label="{{T:vmd_back}}">{{ICO:back:20}}</span>
+    <div class="vm-sheet-title-wrap">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span class="hp-vm-ico" id="vm-sheet-ico">{{ICO:server:16}}</span>
+        <h2 class="vm-sheet-title" id="vm-sheet-title">VM</h2>
+        <span class="hp-vm-status-badge" id="vm-sheet-badge"></span>
+      </div>
+      <span class="vm-sheet-sub" id="vm-sheet-sub"></span>
+    </div>
+    <div class="vm-sheet-top-actions">
+      <a class="btn-open-pve" id="vm-sheet-pve-link" href="#" target="_blank" rel="noopener">
+        <span>{{T:vmd_open_pve}}</span> {{ICO:ext:12}}
+      </a>
+    </div>
+  </div>
+  <div class="vm-sheet-nav" id="vm-sheet-nav">
+    <span class="chip active" data-vmtab="summary" role="button" tabindex="0">{{T:vmd_tab_summary}}</span>
+    <span class="chip" data-vmtab="hardware" role="button" tabindex="0">{{T:vmd_tab_hardware}}</span>
+    <span class="chip" data-vmtab="options" role="button" tabindex="0">{{T:vmd_tab_options}}</span>
+    <span class="chip" data-vmtab="tasks" role="button" tabindex="0">{{T:vmd_tab_tasks}}</span>
+  </div>
+  <div class="vm-sheet-body" id="vm-sheet-body">
     <div class="gempty">{{T:st_loading}}</div>
   </div>
 </div>
