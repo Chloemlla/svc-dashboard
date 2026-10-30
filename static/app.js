@@ -8653,7 +8653,7 @@ function initToolsPage() {
 
 // --- 桌面端分类条(右上角 #catbar): 概览/活动/Tmux/Agent/服务; 移动端隐藏(底部页签) ---
 const CATS = [
-  ["home", "tab_home"], ["activity", "tab_activity"], ["tmux", "tab_tmux"],
+  ["home", "tab_home"], ["activity", "tab_activity"], ["tmux", "nav_tasks"],
   ["agent", "tab_agent"], ["svc", "tab_svc"],
 ];
 const CAT_SELS = {
