@@ -3806,20 +3806,20 @@ function stopTmuxSheetLive() {
     newSubmitBtn.addEventListener("click", async () => {
       const title = (titleInput && titleInput.value.trim()) || "";
       const body = (bodyInput && bodyInput.value.trim()) || "";
-      if (!title) { uiNotice(t("nt_need_title") || "请先写标题"); titleInput && titleInput.focus(); return; }
+      if (!title) { uiNotice(t("nt_need_title") || `请先写标题`); titleInput && titleInput.focus(); return; }
       newSubmitBtn.disabled = true;
       const origText = newSubmitBtn.innerHTML;
       newSubmitBtn.innerHTML = `${icon("wait", 14)} <span>...</span>`;
       try {
         const r = await apiPost("/api/th/new", { title, body, agent: ntAgent, host: ntHost });
         const d = await r.json().catch(() => ({ ok: false, msg: "bad json" }));
-        if (!d.ok) { uiNotice(d.msg || "创建失败"); return; }
+        if (!d.ok) { uiNotice(d.msg || `创建失败`); return; }
         closeNewModal();
         if (titleInput) titleInput.value = "";
         if (bodyInput) bodyInput.value = "";
         TH.health = null;
         if (d.needs_repo) uiNotice(`#${d.number} 已创建 · 在 Telegram 里确认仓库后自动开始`);
-        else uiNotice(`#${d.number} 已派发 · ${ntAgent} @ ${ntHost || "默认机器"}`);
+        else uiNotice(`#${d.number} 已派发 · ${ntAgent} @ ${ntHost || `默认机器`}`);
         await thRenderTasks();
         if (d.number) thOpenTask(d.number, true);
       } catch (err) {
@@ -4280,6 +4280,7 @@ function activatePage(i) {
   if (i === 2) {
     const tp = $("tmux-panel");
     if (tp) tp.hidden = false;
+    tmuxInitSubnav();          // 任务列表 / 看门狗：桌面经 setCat 进入，手机经分页进入，两边都要初始化
     renderTmuxPage();
   }
   if (i === 3) {
@@ -8884,15 +8885,15 @@ function thAgo(iso) {
   if (!iso) return "—";
   const s = (Date.now() - new Date(iso).getTime()) / 1000;
   if (!isFinite(s)) return "—";
-  if (s < 60) return "刚刚";
+  if (s < 60) return `刚刚`;
   if (s < 3600) return `${Math.floor(s / 60)} 分钟前`;
   if (s < 86400) return `${Math.floor(s / 3600)} 小时前`;
   return `${Math.floor(s / 86400)} 天前`;
 }
 
 function thStateLabel(state) {
-  const map = { queued: "排队", starting: "启动中", running: "运行中", waiting_user: "运行中",
-                succeeded: "完成", failed: "失败", cancelled: "已停止", lost: "已丢失" };
+  const map = { queued: `排队`, starting: `启动中`, running: `运行中`, waiting_user: `运行中`,
+                succeeded: `完成`, failed: `失败`, cancelled: `已停止`, lost: `已丢失` };
   return map[state] || state || "—";
 }
 
@@ -8913,9 +8914,63 @@ function thStateChip(run) {
 function tmuxSetTab() { thRenderTasks(); }
 
 function tmuxInitSubnav() {
+  const bar = $("tmux-subnav");
+  if (bar && !bar.dataset.wired) {
+    bar.dataset.wired = "1";
+    bar.addEventListener("click", ev => {
+      const btn = ev.target.closest(".page-subnav-btn");
+      if (!btn || !btn.dataset.ttab) return;
+      const tab = btn.dataset.ttab;
+      bar.querySelectorAll(".page-subnav-btn").forEach(b => b.classList.toggle("active", b === btn));
+      const vTasks = $("tmux-view-tasks");
+      const vSessions = $("tmux-view-sessions");
+      if (tab === "tasks") {
+        if (vTasks) { vTasks.hidden = false; vTasks.style.display = ""; }
+        if (vSessions) { vSessions.hidden = true; vSessions.style.display = "none"; }
+        thRenderTasks();
+      } else {
+        if (vTasks) { vTasks.hidden = true; vTasks.style.display = "none"; }
+        if (vSessions) { vSessions.hidden = false; vSessions.style.display = ""; }
+        if (typeof renderTmuxPage === "function") renderTmuxPage();
+      }
+    });
+  }
+
+  // 绑定新建任务主按钮
+  const btnNew = $("btn-th-new-task") || $("btn-tmux-new-open");
+  if (btnNew && !btnNew.dataset.wired) {
+    btnNew.dataset.wired = "1";
+    btnNew.addEventListener("click", () => thNewTaskModal());
+  }
+
+  // 绑定全量刷新按钮
+  const btnRefresh = $("btn-th-refresh-all");
+  if (btnRefresh && !btnRefresh.dataset.wired) {
+    btnRefresh.dataset.wired = "1";
+    btnRefresh.addEventListener("click", () => {
+      const vTasks = $("tmux-view-tasks");
+      if (vTasks && !vTasks.hidden) {
+        TH.health = null;
+        thRenderTasks();
+      } else if (typeof renderTmuxPage === "function") {
+        renderTmuxPage();
+      }
+    });
+  }
+
   thEnsureBase();
   thRenderTasks();
   thStartWatcher();
+  thUpdateTmuxBadge();
+}
+
+async function thUpdateTmuxBadge() {
+  const b = $("n-ttab-sessions");
+  if (!b) return;
+  const d = await thGet("/api/tmux").catch(() => null);
+  if (d && d.sessions) {
+    b.textContent = String(d.sessions.length);
+  }
 }
 
 /* GitHub 没有 webhook 到内网，所以列表靠轮询保持新鲜：
@@ -8945,7 +9000,31 @@ function thEnsureBase() {
   ]);
 }
 
+/* 桌面左右两列各自滚动：容器高度 = 视口 - 面板顶部，窗口尺寸变化时重算 */
+function thFitSplit() {
+  const split = document.querySelector("#tmux-panel .th-split");
+  if (!split) return;
+  if (!window.matchMedia("(min-width: 701px)").matches) {
+    split.style.removeProperty("--th-split-h");
+    return;
+  }
+  let top = 0, el = split;
+  while (el) { top += el.offsetTop; el = el.offsetParent; }
+  const apply = extra => split.style.setProperty(
+    "--th-split-h", Math.max(320, Math.round(window.innerHeight - top - 18 - extra)) + "px");
+  apply(0);
+  requestAnimationFrame(() => {
+    const over = document.scrollingElement.scrollHeight - window.innerHeight;
+    if (over > 0) apply(over);
+  });
+}
+window.addEventListener("resize", () => {
+  clearTimeout(TH.fitT);
+  TH.fitT = setTimeout(thFitSplit, 120);
+});
+
 const TH_ACTIVE = new Set(["queued", "starting", "running", "waiting_user"]);
+const TH_DISPATCH_KEY = "svc-th-dispatch";   // 上次派发选的执行者 / 机器
 const TH_STAGE_ORDER = ["analyze", "plan", "implement", "test", "commit", "pr", "done"];
 
 function thHostName(run) {
@@ -8966,12 +9045,22 @@ function thPercent(run) {
   return idx < 0 ? 0 : Math.round(((idx + 1) / TH_STAGE_ORDER.length) * 100);
 }
 
-/* ---------------- 任务列表：正在跑 / 待派发 / 已完成 ---------------- */
+function thFormatDuration(sec) {
+  if (!sec || sec < 0) return "";
+  const s = Math.round(sec);
+  if (s < 60) return `${s}秒`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  if (m < 60) return rem ? `${m}分${rem}秒` : `${m}分钟`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return `${h}小时${rm}分`;
+}
+
+/* ---------------- 任务列表：支持状态过滤与精简卡片 ---------------- */
 async function thRenderTasks(silent) {
   const box = $("th-tasks"); if (!box) return;
   if (BOOT.static) {
-    // 公开快照：列表只有标题 + 摘要，没有任何按钮；详情用马赛克占位。
-    // 正文/分支/日志/编号在导出阶段就没有采集，所以这里没有可泄露的数据。
     const items = (BOOT.thTasks && BOOT.thTasks.items) || [];
     box.innerHTML = items.length ? `
       <div class="th-group">
@@ -8993,70 +9082,124 @@ async function thRenderTasks(silent) {
     }
     return;
   }
+
   const keep = silent ? TH.taskView : null;
   const wide = window.matchMedia("(min-width: 701px)").matches;
   box.hidden = false;
   const det = $("th-detail");
-  if (det && !wide) det.hidden = true;
+  if (det && !wide && !TH.taskView) det.hidden = true;
   if (!TH.taskView) TH.taskView = null;
+  if (!TH.filter) TH.filter = "active";
+
   box.innerHTML = `<div class="th-skeleton"><i></i><i></i><i></i></div>`;
   const d = await thGet("/api/th/issues?mode=all");
-  if (d.ok === false) { box.innerHTML = `<div class="gempty t-red">${escHtml(d.msg || "无法读取任务")}</div>`; return; }
+  if (d.ok === false) { box.innerHTML = `<div class="gempty t-red">${escHtml(d.msg || `无法读取任务`)}</div>`; return; }
   const items = d.issues || [];
   const running = items.filter(i => i.run && TH_ACTIVE.has(i.run.state));
   const pending = items.filter(i => !i.run && i.state === "open");
-  const done = items.filter(i => !running.includes(i));
+  const done = items.filter(i => !running.includes(i) && !pending.includes(i));
 
-  const group = (key, title, list, open) => !list.length ? "" : `
-    <section class="th-group">
-      <button class="th-group-head" type="button" data-th-group="${key}">
-        <span class="th-group-title">${escHtml(title)}</span>
-        <span class="th-group-n">${list.length}</span>
-        <span class="th-group-caret">${open ? "收起" : "展开"}</span>
-      </button>
-      <div class="th-cards" ${open ? "" : "hidden"}>${list.map(i => thTaskCard(i, key)).join("")}</div>
-    </section>`;
-
-  box.innerHTML = `
-    <div class="filters th-filters">
-      <input class="th-search" id="th-search" placeholder="搜索任务" value="${escHtml(TH.q)}" />
-      <span class="chip th-refresh" data-th-refresh="1" role="button" tabindex="0">刷新</span>
-    </div>
-    ${group("running", "正在跑", running, true)}
-    ${group("pending", "待派发", pending, true)}
-    ${group("done", "已完成", done, false)}
-    <section class="th-group" id="th-others"></section>
-    ${items.length ? "" : `<div class="gempty">${escHtml(t("th_empty"))}</div>`}`;
-
-  const search = $("th-search");
-  if (search) {
-    let deb;
-    search.addEventListener("input", () => { clearTimeout(deb); deb = setTimeout(() => { TH.q = search.value.trim(); thRenderTasks(); }, 300); });
+  // 更新子导航角标
+  const badgeEl = $("n-ttab-tasks");
+  if (badgeEl) {
+    badgeEl.textContent = running.length ? `⚡${running.length}` : String(running.length + pending.length);
   }
-  box.querySelector("[data-th-refresh]")?.addEventListener("click", () => { TH.health = null; thRenderTasks(); });
+
+  // 顶部筛选 Chips
+  const curF = TH.filter;
+  const filterBarHtml = `
+    <div class="th-filter-bar">
+      <span class="th-filter-chip${curF === 'active' ? ' active' : ''}" data-tf="active">
+        活跃任务 <span class="th-filter-count">${running.length + pending.length}</span>
+      </span>
+      <span class="th-filter-chip${curF === 'running' ? ' active' : ''}" data-tf="running">
+        ⚡ 运行中 <span class="th-filter-count">${running.length}</span>
+      </span>
+      <span class="th-filter-chip${curF === 'pending' ? ' active' : ''}" data-tf="pending">
+        待派发 <span class="th-filter-count">${pending.length}</span>
+      </span>
+      <span class="th-filter-chip${curF === 'done' ? ' active' : ''}" data-tf="done">
+        已完成 <span class="th-filter-count">${done.length}</span>
+      </span>
+      <span class="th-filter-chip${curF === 'all' ? ' active' : ''}" data-tf="all">
+        全部 <span class="th-filter-count">${items.length}</span>
+      </span>
+    </div>`;
+
+  const group = (key, title, list, open) => {
+    if (!list.length) return "";
+    return `
+      <section class="th-group">
+        <button class="th-group-head" type="button" data-th-group="${key}">
+          <span class="th-group-title">${escHtml(title)}</span>
+          <span class="th-group-n">${list.length}</span>
+          <span class="th-group-caret">${open ? `收起` : `展开`}</span>
+        </button>
+        <div class="th-cards" ${open ? "" : "hidden"}>${list.map(i => thTaskCard(i, key)).join("")}</div>
+      </section>`;
+  };
+
+  let groupsHtml = "";
+  if (curF === "active") {
+    groupsHtml += group("running", `正在跑`, running, true);
+    groupsHtml += group("pending", `待派发`, pending, true);
+    if (!running.length && !pending.length) {
+      groupsHtml += `<div class="gempty">暂无活跃任务 · 点上方「下发新任务」开始</div>`;
+    }
+  } else if (curF === "running") {
+    groupsHtml += group("running", `正在跑`, running, true);
+    if (!running.length) groupsHtml += `<div class="gempty">暂无正在运行的任务</div>`;
+  } else if (curF === "pending") {
+    groupsHtml += group("pending", `待派发`, pending, true);
+    if (!pending.length) groupsHtml += `<div class="gempty">暂无待派发任务</div>`;
+  } else if (curF === "done") {
+    groupsHtml += group("done", `已完成`, done, true);
+    if (!done.length) groupsHtml += `<div class="gempty">暂无已完成任务</div>`;
+  } else {
+    groupsHtml += group("running", `正在跑`, running, true);
+    groupsHtml += group("pending", `待派发`, pending, true);
+    groupsHtml += group("done", `已完成`, done, false);
+  }
+
+  box.innerHTML = filterBarHtml + groupsHtml;
+
+  // 绑定过滤器点击
+  box.querySelectorAll("[data-tf]").forEach(el => el.addEventListener("click", () => {
+    TH.filter = el.dataset.tf;
+    thRenderTasks();
+  }));
+
+  // 展开折叠
   box.querySelectorAll("[data-th-group]").forEach(h => h.addEventListener("click", () => {
     const cards = h.nextElementSibling; if (!cards) return;
     cards.hidden = !cards.hidden;
-    h.querySelector(".th-group-caret").textContent = cards.hidden ? "展开" : "收起";
+    h.querySelector(".th-group-caret").textContent = cards.hidden ? `展开` : `收起`;
   }));
+
+  // 点击任务行
   box.querySelectorAll("[data-th-open]").forEach(el => el.addEventListener("click", ev => {
     ev.stopPropagation(); thOpenTask(Number(el.dataset.thOpen));
   }));
-  thRenderOtherSessions();
+
   if (wide && !TH.taskView) {
     const first = running[0] || pending[0] || done[0];
     if (first) thOpenTask(first.number, true);
   } else if (keep && box.querySelector(`[data-th-open="${keep}"]`)) {
     box.querySelectorAll(".th-row").forEach(el => el.classList.toggle("selected", Number(el.dataset.thOpen) === keep));
   }
-  box.querySelectorAll("[data-th-act]").forEach(el => el.addEventListener("click", ev => {
-    ev.stopPropagation();
-    const n = Number(el.dataset.num), kind = el.dataset.thAct;
-    if (kind === "dispatch") thDispatchModal(n, { title: el.dataset.title || "" });
-    if (kind === "restore") thSetState(n, "open");
-    if (kind === "cancel") thCancel(el.dataset.run);
-    if (kind === "resume") thReply(el.dataset.run, n);
-  }));
+
+  box.querySelectorAll("[data-th-act]").forEach(el => {
+    el.addEventListener("click", ev => {
+      ev.stopPropagation();
+      const n = Number(el.dataset.num), kind = el.dataset.thAct;
+      if (kind === "dispatch") thDispatchModal(n, { title: el.dataset.title || "" });
+      if (kind === "restore") thSetState(n, "open");
+      if (kind === "cancel") thCancel(el.dataset.run);
+      if (kind === "resume") thReply(el.dataset.run, n);
+    });
+  });
+
+  thFitSplit();
 }
 
 function thStaticDetail(it) {
@@ -9069,13 +9212,13 @@ function thStaticDetail(it) {
     </header>
     <div class="th-detail-body">
       <div class="th-static-tag">${escHtml(t("th_static_note"))}</div>
-      <section class="th-block">${line(34)}${line(68)}${line(52)}</section>
-      <section class="th-block">
-        <div class="th-block-head"><span class="th-block-title">${escHtml(t("th_timeline"))}</span></div>
+      <section class="th-sec">${line(34)}${line(68)}${line(52)}</section>
+      <section class="th-sec">
+        <div class="th-sec-head"><span class="th-sec-title">${escHtml(t("th_timeline"))}</span></div>
         ${line(44)}${line(60)}${line(38)}
       </section>
-      <section class="th-block">
-        <div class="th-block-head"><span class="th-block-title">${escHtml(t("th_issue_body"))}</span></div>
+      <section class="th-sec">
+        <div class="th-sec-head"><span class="th-sec-title">${escHtml(t("th_issue_body"))}</span></div>
         ${line(92)}${line(86)}${line(74)}${line(90)}${line(58)}
       </section>
     </div>`;
@@ -9083,250 +9226,477 @@ function thStaticDetail(it) {
 
 function thTaskCard(it, kind) {
   const run = it.run || null;
-  const state = run ? thStateLabel(run.state) : (it.state === "closed" ? "已完成" : "待派发");
+  const state = run ? thStateLabel(run.state) : (it.state === "closed" ? `已完成` : `待派发`);
   const pct = thPercent(run);
-  const meta = thCardMeta([
-    `<b>#${it.number}</b>`,
-    run ? escHtml(thHostName(run)) : "",
-    run && run.stage ? escHtml(run.stage) : "",
-    escHtml(thAgo(it.updatedAt)),
-  ]);
-  const excerpt = it.excerpt ? `<div class="th-excerpt">${escHtml(it.excerpt)}</div>` : "";
-  let actions = "";
-  const dispatchBtn = `<button class="th-btn th-btn-sm th-btn-primary" type="button" data-th-act="dispatch" data-num="${it.number}" data-title="${escAttr(it.title || "")}">${escHtml(t("th_dispatch"))}</button>`;
-  if (kind === "running") {
-    actions = `<button class="th-btn th-btn-sm th-btn-danger" type="button" data-th-act="cancel" data-run="${escAttr(run.id)}">${escHtml(t("th_cancel"))}</button>`;
-  } else if (kind === "pending") {
-    actions = dispatchBtn;
-  } else {
-    actions = it.state === "closed"
-      ? `<button class="th-btn th-btn-sm" type="button" data-th-act="restore" data-num="${it.number}">${escHtml(t("th_restore"))}</button>`
-      : dispatchBtn;
-  }
-  const progress = kind === "running"
-    ? `<div class="th-progress"><i style="width:${pct}%"></i></div>` : "";
+  const excerpt = it.excerpt ? `<div class="th-excerpt" title="${escAttr(it.excerpt)}">${escHtml(it.excerpt)}</div>` : "";
   const selected = TH.taskView === it.number ? " selected" : "";
   const dotState = run ? (run.state || "") : (it.state === "closed" ? "done" : "pending");
+
   const metaParts = [
     `<b>#${it.number}</b>`,
     run ? escHtml(thHostName(run)) : "",
     run && run.stage ? escHtml(run.stage) : "",
   ].filter(Boolean).join('<i class="th-dot"></i>');
+
+  const progress = (kind === "running" || (run && TH_ACTIVE.has(run.state)))
+    ? `<div class="th-progress"><i style="width:${Math.max(12, pct)}%"></i></div>` : "";
+
+  let actions = "";
+  if (kind === "running" && run) {
+    actions = `<div class="th-row-actions"><button class="th-btn th-btn-sm th-btn-danger" type="button" data-th-act="cancel" data-run="${escAttr(run.id)}">停止</button></div>`;
+  } else if (kind === "pending") {
+    actions = `<div class="th-row-actions"><button class="th-btn th-btn-sm th-btn-primary" type="button" data-th-act="dispatch" data-num="${it.number}" data-title="${escAttr(it.title || "")}">派发</button></div>`;
+  }
+
   return `<div class="th-card th-row${selected}" data-th-open="${it.number}" role="button" tabindex="0">
     <div class="th-row-head">
       <span class="th-state"><i class="th-led th-led-${escHtml(dotState)}"></i>${escHtml(state)}</span>
       <span class="th-row-id">${metaParts}</span>
       <span class="th-row-time">${escHtml(thAgo(it.updatedAt))}</span>
     </div>
-    <div class="th-title">${escHtml(it.title || "")}</div>
+    <div class="th-title" title="${escAttr(it.title || "")}">${escHtml(it.title || "")}</div>
     ${excerpt}
     ${progress}
-    ${kind === "running" ? `<div class="th-row-actions">${actions}</div>` : ""}
+    ${actions}
   </div>`;
 }
 
-async function thRenderOtherSessions() {
-  const host = $("th-others"); if (!host) return;
-  const d = await thGet("/api/tmux");
-  const sessions = (d.sessions || []).filter(x => !(x.name || "").startsWith("th-"));
-  if (!sessions.length) { host.innerHTML = ""; return; }
-  host.innerHTML = `
-    <button class="th-group-head" type="button" data-th-others="1">
-      <span class="th-group-title">其他会话</span><span class="th-group-n">${sessions.length}</span>
-      <span class="th-group-caret">展开</span></button>
-    <div class="th-cards" hidden>${sessions.map(x => `
-      <div class="th-card th-row" data-th-session="${escHtml(x.name || "")}" role="button" tabindex="0">
-        <div class="th-row-head"><span class="th-st ${x.attached ? "th-running" : "th-pending"}">${x.attached ? "已连接" : "后台"}</span>
-          <span class="th-row-time">${(x.panes || []).length || x.panes_count || 0} 窗格</span></div>
-        <div class="th-title">${escHtml(x.name || "")}</div>
-        <div class="th-meta"><span>${escHtml(x.cwd || x.path || "")}</span></div>
-      </div>`).join("")}</div>`;
-  host.querySelector("[data-th-others]")?.addEventListener("click", ev => {
-    const cards = ev.currentTarget.nextElementSibling;
-    cards.hidden = !cards.hidden;
-    ev.currentTarget.querySelector(".th-group-caret").textContent = cards.hidden ? "展开" : "收起";
-  });
-  host.querySelectorAll("[data-th-session]").forEach(el => el.addEventListener("click", () => thOpenSession(el.dataset.thSession)));
-}
-
-async function thOpenSession(name) {
-  const det = $("th-detail"); if (!det) return;
-  const prev = TH.taskView;
-  TH.taskView = null;
-  det.innerHTML = `
-    <header class="th-head">
-      <div class="th-head-line">
-        <button class="th-icon-btn th-back" type="button" data-th-back="1" aria-label="返回">←</button>
-        <span class="th-badge is-running">tmux</span>
-        <span class="th-head-num">${escHtml(name)}</span>
-        <button class="th-icon-btn th-head-link" type="button" data-th-wake="${escAttr(name)}" title="唤醒" aria-label="唤醒">⚡</button>
-      </div>
-      <h3 class="th-head-title">终端会话</h3>
-    </header>
-    <div class="th-detail-body">
-      <pre class="th-log" id="th-session-pre">${escHtml(t("th_loading"))}</pre>
-    </div>`;
-  det.querySelector("[data-th-back]")?.addEventListener("click", () => {
-    if (TH.timer) { clearInterval(TH.timer); TH.timer = null; }
-    if (prev) thOpenTask(prev); else { det.hidden = true; thRenderTasks(); }
-  });
-  det.querySelector("[data-th-wake]")?.addEventListener("click", async () => {
-    const r = await apiPost("/api/tmux/wake", { session: name, pane: "" });
-    const d = await r.json().catch(() => ({ ok: false }));
-    if (!d.ok) uiNotice(d.msg || "唤醒失败");
-  });
-  const pull = async () => {
-    const d = await thGet(`/api/tmux/capture?target=${encodeURIComponent(name)}&lines=300`);
-    const pre = $("th-session-pre"); if (!pre) return;
-    pre.textContent = d.ok === false ? (d.msg || "") : ((d.text || d.capture || d.log) || t("th_no_log"));
-    pre.scrollTop = pre.scrollHeight;
-  };
-  pull();
-  if (TH.timer) { clearInterval(TH.timer); TH.timer = null; }
-  TH.timer = setInterval(() => {
-    const pre = $("th-session-pre");
-    if (!pre) { clearInterval(TH.timer); TH.timer = null; return; }
-    if (TH.busy) return;
-    TH.busy = true; pull().finally(() => { TH.busy = false; });
-  }, 3000);
-}
-
-/* ---------------- 任务详情：状态 + 阶段 + 事件 + 原始日志 ---------------- */
+/* ---------------- 任务详情：全生命周期流水线 + 实时控制台 + 交互式回复 ---------------- */
 async function thOpenTask(number, keepScroll) {
   const box = $("th-tasks"), det = $("th-detail");
   if (!box || !det) return;
   TH.taskView = number;
   if (TH.timer) { clearInterval(TH.timer); TH.timer = null; }
   const wide = window.matchMedia("(min-width: 701px)").matches;
-  box.hidden = !wide;            // 桌面：左列表常驻；手机：列表让位给详情
+  box.hidden = !wide;
   det.hidden = false;
+  if (!wide && !keepScroll) det.scrollIntoView({ block: "start" });
   document.querySelectorAll("#th-tasks .th-row").forEach(el => el.classList.toggle("selected", Number(el.dataset.thOpen) === number));
   det.innerHTML = `<div class="th-skeleton"><i></i><i></i></div>`;
+
   const d = await thGet(`/api/th/task?number=${encodeURIComponent(number)}`);
-  if (d.ok === false) { det.innerHTML = `<div class="gempty t-red">${escHtml(d.msg || "无法读取任务")}</div>`; return; }
+  if (d.ok === false) { det.innerHTML = `<div class="gempty t-red">${escHtml(d.msg || `无法读取任务`)}</div>`; return; }
+
   const issue = d.issue || {}, runs = d.runs || [], latest = d.latest || null, events = d.events || [];
-  const stageIdx = latest ? TH_STAGE_ORDER.indexOf(latest.stage || "") : -1;
-  const KEY_EV = new Set(["queued", "started", "waiting_user", "resume", "routed", "succeeded", "failed", "cancelled", "lost", "comment", "cleanup"]);
-  const evRow = e => `
-      <li class="th-ev th-ev-${escHtml(e.kind || "")}">
-        <span class="th-ev-time">${new Date((e.at || 0) * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</span>
-        <span class="th-ev-kind">${escHtml(e.kind || "")}</span>
-        <span class="th-ev-msg">${escHtml((e.message || "").slice(0, 200))}</span>
-      </li>`;
-  const keyEvents = events.filter(e => KEY_EV.has(e.kind || ""));
-  const shownEvents = TH.showAllEvents ? events : (keyEvents.length ? keyEvents : events);
-  const timeline = events.length
-    ? shownEvents.map(evRow).join("") + (events.length > shownEvents.length
-        ? `<li class="th-ev th-ev-more"><span class="chip" data-th-allevents="1" role="button" tabindex="0">展开其余 ${events.length - shownEvents.length} 条</span></li>` : "")
-    : `<li class="th-ev th-ev-empty">${latest ? "还没有执行记录" : "尚未派发 · 点上方「派发」开始"}</li>`;
   const activeRun = latest && TH_ACTIVE.has(latest.state);
-  const stages = TH_STAGE_ORDER.map((s, i) => {
-    const done = i < stageIdx || (!activeRun && i === stageIdx);
-    const now = activeRun && i === stageIdx;
-    return `<span class="th-stage ${done ? "done" : ""} ${now ? "now" : ""}">${escHtml(s)}</span>`;
-  }).join("");
-  const stateKey = latest ? (latest.state || "") : (issue.state === "closed" ? "closed" : "pending");
-  const stateText = latest ? thStateLabel(latest.state) : (issue.state === "closed" ? "已完成" : "待派发");
-  const metaBits = [d.repo || "", latest ? thHostName(latest) : "", latest && latest.branch ? latest.branch : ""]
-    .filter(Boolean).map(x => `<span>${escHtml(x)}</span>`).join('<i class="th-sep"></i>');
+  const isPending = !activeRun && issue.state !== "closed";
+  const isClosed = issue.state === "closed" || (latest && !activeRun);
+  const stateKey = latest ? (latest.state || "") : (issue.state === "closed" ? "succeeded" : "pending");
+  const stateText = latest ? thStateLabel(latest.state) : (issue.state === "closed" ? `已完成` : `待派发`);
+
+  // 阶段流水线（仅在运行中或有实际执行时计算展示）
+  const steps = [
+    { key: "dispatch", label: `1. 调度派发` },
+    { key: "analyze",  label: `2. 需求分析` },
+    { key: "develop",  label: `3. 代码编写` },
+    { key: "test",     label: `4. 验证测试` },
+    { key: "done",     label: `5. 交付完成` }
+  ];
+
+  let curStepIdx = 0;
+  if (latest) {
+    if (latest.state === "succeeded") {
+      curStepIdx = 4;
+    } else if (latest.state === "failed" || latest.state === "cancelled" || latest.state === "lost") {
+      curStepIdx = Math.max(1, TH_STAGE_ORDER.indexOf(latest.stage || ""));
+      if (curStepIdx > 3) curStepIdx = 3;
+    } else {
+      const stg = latest.stage || "";
+      if (stg === "analyze" || stg === "plan") curStepIdx = 1;
+      else if (stg === "implement" || stg === "commit") curStepIdx = 2;
+      else if (stg === "test" || stg === "pr") curStepIdx = 3;
+      else if (stg === "done") curStepIdx = 4;
+      else curStepIdx = 2;
+    }
+  }
+
+  const stepperHtml = activeRun ? `
+    <div class="th-stepper">
+      ${steps.map((s, idx) => {
+        const isDone = (latest && latest.state === "succeeded") || idx < curStepIdx;
+        const isCurrent = activeRun && idx === curStepIdx;
+        const cls = isDone ? "is-done" : (isCurrent ? "is-current" : "");
+        const iconTxt = isDone ? "✓" : String(idx + 1);
+        return `
+          <div class="th-step-item ${cls}">
+            <div class="th-step-dot">${iconTxt}</div>
+            <div class="th-step-label">${escHtml(s.label)}</div>
+          </div>`;
+      }).join("")}
+    </div>` : "";
+
+  // 状态横幅
+  let statusBannerHtml = "";
+  if (activeRun) {
+    const durationTxt = latest && latest.duration ? thFormatDuration(latest.duration) : "";
+    const runMsg = (latest && latest.message) ? latest.message : `智能体正在运行中…`;
+    const isWaiting = latest && latest.state === "waiting_user";
+    statusBannerHtml = `
+      <div class="th-status-banner${isWaiting ? ' is-warn' : ''}">
+        <div class="th-status-msg">
+          ${isWaiting ? `⚠️ <b>等待反馈</b>：` : '⚡ '}
+          <span>${escHtml(runMsg)}</span>
+        </div>
+        <div class="th-status-meta">
+          ${latest && latest.agent ? `<span class="chip th-chip" style="margin-right:6px;">${escHtml(latest.agent)}</span>` : ''}
+          ${durationTxt ? `<span>⏱ ${durationTxt}</span>` : ''}
+        </div>
+      </div>`;
+  }
+
+  // 内联人机交互区（针对 waiting_user 或 运行中随时干预）
+  let inlineReplyHtml = "";
+  if (activeRun) {
+    const isWaiting = latest && latest.state === "waiting_user";
+    const phTxt = isWaiting ? `请输入回复内容...` : `例如：检查 models.py 并重新测试...`;
+    inlineReplyHtml = `
+      <div class="th-inline-reply">
+        <div class="th-inline-reply-head">
+          <span>${isWaiting ? `💬 智能体等待你的回复：` : `💬 向运行中的智能体追加指令：`}</span>
+          <span style="font-size:10.5px;color:var(--text-ghost);">按回车直接发送</span>
+        </div>
+        <div class="th-inline-reply-box">
+          <input type="text" class="th-reply-input" id="th-inline-input" placeholder="${phTxt}" />
+          <button class="th-btn th-btn-primary" type="button" id="th-inline-send">发送</button>
+        </div>
+      </div>`;
+  }
+
+  // 待派发场景下的「内置快捷派发面板」
+  let quickDispatchHtml = "";
+  if (isPending) {
+    const hosts = ((TH.hosts && TH.hosts.hosts) || []).filter(h => h.online !== false);
+    const defHost = (TH.hosts && TH.hosts.default) || (hosts[0] || {}).id || "";
+    quickDispatchHtml = `
+      <div class="th-quick-dispatch">
+        <div class="th-qd-head">
+          <span class="th-qd-title">🚀 准备派发该任务</span>
+          <span class="th-qd-hint">选择执行智能体与目标机器后即可一键运行</span>
+        </div>
+        <div class="th-qd-row">
+          <span class="th-qd-label">智能体</span>
+          <div class="th-qd-opts" id="th-qd-agents">
+            <button class="th-qd-opt is-on" type="button" data-qd-agent="pi">⚡ pi (推荐·敏捷修改)</button>
+            <button class="th-qd-opt" type="button" data-qd-agent="omp">omp (通用开发)</button>
+            <button class="th-qd-opt" type="button" data-qd-agent="hermes">hermes (复杂调度)</button>
+          </div>
+        </div>
+        <div class="th-qd-row">
+          <span class="th-qd-label">机器</span>
+          <div class="th-qd-opts" id="th-qd-hosts">
+            ${hosts.map((h, i) => `
+              <button class="th-qd-opt${h.id === defHost || (!defHost && i === 0) ? ' is-on' : ''}" type="button" data-qd-host="${escAttr(h.id)}">
+                <i class="th-opt-dot"></i> <span>${escHtml(h.label || h.id)}</span>
+              </button>`).join("") || `<span class="th-field-none">本地</span>`}
+          </div>
+        </div>
+        <div class="th-qd-foot">
+          <button class="th-btn th-btn-primary th-qd-launch" type="button" id="btn-qd-launch">⚡ 开始执行任务</button>
+        </div>
+      </div>`;
+  }
+
+  // 顶部操作动作组
   const actions = [
-    `<button class="th-btn th-btn-primary" type="button" data-th-act="dispatch" data-num="${issue.number}" data-title="${escAttr(issue.title || "")}">${escHtml(t("th_dispatch"))}</button>`,
-    latest && latest.state === "waiting_user"
-      ? `<button class="th-btn" type="button" data-th-act="resume" data-run="${escAttr(latest.id)}" data-num="${issue.number}">${escHtml(t("th_reply"))}</button>` : "",
     activeRun
-      ? `<button class="th-btn th-btn-danger" type="button" data-th-act="cancel" data-run="${escAttr(latest.id)}" data-num="${issue.number}">${escHtml(t("th_cancel"))}</button>` : "",
+      ? `<button class="th-btn" type="button" data-th-act="wake" data-sess="${escAttr(latest ? latest.tmux_session : "")}">⚡ 唤醒推进</button>` : "",
+    activeRun
+      ? `<button class="th-btn th-btn-danger" type="button" data-th-act="cancel" data-run="${escAttr(latest ? latest.id : "")}" data-num="${issue.number}">停止</button>` : "",
+    isClosed
+      ? `<button class="th-btn th-btn-primary" type="button" data-th-act="dispatch" data-num="${issue.number}" data-title="${escAttr(issue.title || "")}">重新派发</button>` : "",
     issue.state === "closed"
-      ? `<button class="th-btn" type="button" data-th-act="restore" data-num="${issue.number}">${escHtml(t("th_restore"))}</button>`
+      ? `<button class="th-btn" type="button" data-th-act="restore" data-num="${issue.number}">恢复打开</button>`
       : `<button class="th-btn" type="button" data-th-act="close" data-num="${issue.number}">关闭任务</button>`,
   ].filter(Boolean).join("");
+
+  const metaBits = [
+    d.repo || "",
+    latest ? thHostName(latest) : "",
+    latest && latest.branch ? latest.branch : "",
+    latest && latest.tmux_session ? `tmux: ${latest.tmux_session}` : ""
+  ].filter(Boolean).map(x => `<span>${escHtml(x)}</span>`).join('<i class="th-head-sep"></i>');
+
+  // 多 Tab 控制区（自适应默认值）
+  if (!TH.detailTab || isPending) {
+    TH.detailTab = isPending ? "issue" : "console";
+  }
+  const curDTab = TH.detailTab;
+
   det.innerHTML = `
-    <header class="th-head">
+    <div class="th-head">
       <div class="th-head-line">
-        <button class="th-icon-btn th-back" type="button" data-th-back="1" aria-label="返回">←</button>
+        <button class="th-icon-btn th-back" type="button" data-th-back="1" aria-label="Back">←</button>
         <span class="th-badge is-${escAttr(stateKey)}">${escHtml(stateText)}</span>
         <span class="th-head-num">#${escHtml(String(issue.number || ""))}</span>
+        ${metaBits ? `<i class="th-head-sep"></i>${metaBits}` : ""}
         <a class="th-icon-btn th-head-link" href="${escAttr(issue.url || "#")}" target="_blank" rel="noopener" title="GitHub" aria-label="GitHub">↗</a>
       </div>
       <h3 class="th-head-title">${escHtml(issue.title || "")}</h3>
-      ${metaBits ? `<div class="th-head-meta">${metaBits}</div>` : ""}
       <div class="th-head-actions">${actions}</div>
-    </header>
+    </div>
     <div class="th-detail-body">
-      <section class="th-block">
-        <div class="th-block-head">
-          <span class="th-block-title">进度</span>
-          ${latest && latest.agent ? `<span class="th-block-note">${escHtml(latest.agent)}</span>` : ""}
+      ${stepperHtml}
+      ${statusBannerHtml}
+      ${inlineReplyHtml}
+      ${quickDispatchHtml}
+
+      <div class="th-detail-tabs">
+        ${activeRun || (latest && latest.tmux_session) ? `
+          <button class="th-dtab-btn${curDTab === 'console' ? ' active' : ''}" type="button" data-dtab="console">💻 实时终端控制台</button>` : ''}
+        <button class="th-dtab-btn${curDTab === 'issue' ? ' active' : ''}" type="button" data-dtab="issue">📝 任务内容说明</button>
+        <button class="th-dtab-btn${curDTab === 'timeline' ? ' active' : ''}" type="button" data-dtab="timeline">📋 执行时间线 (${events.length})</button>
+        ${runs.length > 1 ? `<button class="th-dtab-btn${curDTab === 'runs' ? ' active' : ''}" type="button" data-dtab="runs">📜 历史执行 (${runs.length})</button>` : ''}
+      </div>
+
+      ${activeRun || (latest && latest.tmux_session) ? `
+      <div id="th-tab-console-pane" ${curDTab === 'console' ? '' : 'hidden'}>
+        <div class="th-term-window">
+          <div class="th-term-header">
+            <span id="th-term-title">会话：${escHtml(latest && latest.tmux_session ? latest.tmux_session : "none")}</span>
+            <div class="th-term-actions">
+              <button class="th-term-btn" type="button" id="btn-term-autoscroll" title="Auto Scroll">滚屏: 开</button>
+              <button class="th-term-btn" type="button" id="btn-term-ctrl-c" title="Ctrl+C">Ctrl+C</button>
+              <button class="th-term-btn" type="button" id="btn-term-enter" title="Enter">Enter ↵</button>
+              <button class="th-term-btn" type="button" id="btn-term-wake" title="Wake">⚡ 唤醒</button>
+              <button class="th-term-btn" type="button" id="btn-term-copy" title="Copy">复制</button>
+            </div>
+          </div>
+          <pre class="th-term-content" id="th-term-output">${escHtml(t("th_loading"))}</pre>
         </div>
-        ${latest ? `<div class="th-stages">${stages}</div>
-          ${activeRun ? `<div class="th-progress"><i style="width:${thPercent(latest)}%"></i></div>` : ""}
-          <div class="th-now">${escHtml(latest.message || "—")}</div>`
-        : `<div class="th-now">尚未派发 · 点上方「${escHtml(t("th_dispatch"))}」选择执行者和机器</div>`}
-      </section>
-      ${latest && latest.tmux_session ? `
-      <section class="th-block">
-        <div class="th-block-head">
-          <span class="th-block-title">会话</span>
-          <code class="th-sess">${escHtml(latest.tmux_session)}</code>
-          <button class="th-btn th-btn-sm" type="button" data-th-session-open="${escAttr(latest.tmux_session)}">查看终端</button>
-        </div>
-        <pre class="th-log" id="th-task-preview">${escHtml(t("th_loading"))}</pre>
-      </section>` : ""}
-      <section class="th-block">
-        <div class="th-block-head">
-          <span class="th-block-title">执行时间线</span>
-          ${events.length ? `<span class="th-block-note">${events.length}</span>` : ""}
-        </div>
-        <ol class="th-timeline">${timeline}</ol>
-      </section>
-      <section class="th-block">
-        <div class="th-block-head"><span class="th-block-title">Issue 内容</span></div>
-        <div class="th-body">${escHtml(issue.body || "（无正文）")}</div>
-      </section>
-      ${runs.length ? `<section class="th-block">
-        <div class="th-block-head"><span class="th-block-title">历史执行</span><span class="th-block-note">${runs.length}</span></div>
+      </div>` : ''}
+
+      <div id="th-tab-issue-pane" ${curDTab === 'issue' ? '' : 'hidden'}>
+        <div class="th-prose">${escHtml(issue.body || `（无正文）`)}</div>
+      </div>
+
+      <div id="th-tab-timeline-pane" ${curDTab === 'timeline' ? '' : 'hidden'}>
+        <ol class="th-timeline">
+          ${events.length ? events.map(e => `
+            <li class="th-ev th-ev-${escHtml(e.kind || "")}">
+              <span class="th-ev-time">${new Date((e.at || 0) * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+              <span class="th-ev-kind">${escHtml(e.kind || "")}</span>
+              <span class="th-ev-msg">${escHtml((e.message || "").slice(0, 300))}</span>
+            </li>`).join("") : `<li class="th-ev th-ev-empty">暂无事件记录</li>`}
+        </ol>
+      </div>
+
+      ${runs.length > 1 ? `
+      <div id="th-tab-runs-pane" ${curDTab === 'runs' ? '' : 'hidden'}>
         <div class="th-runs">${runs.map(r => `
           <div class="th-run-row" data-th-runlog="${escAttr(r.id)}" role="button" tabindex="0">
-            <span>${escHtml(r.agent)}</span><span>${escHtml(thStateLabel(r.state))}</span>
-            <span>${escHtml(r.stage || "—")}</span><span>${escHtml(thAgo(new Date((r.started_at || r.created_at) * 1000).toISOString()))}</span>
-            <span class="th-run-log-link">原始日志</span>
+            <span class="th-run-agent">${escHtml(r.agent)}</span>
+            <span class="th-run-state">${escHtml(thStateLabel(r.state))}</span>
+            <span class="th-run-stage">${escHtml(r.stage || "—")}</span>
+            <span class="th-run-time">${escHtml(thAgo(new Date((r.started_at || r.created_at) * 1000).toISOString()))}</span>
+            <span class="th-run-log-link">查看日志</span>
           </div>`).join("")}</div>
-      </section>` : ""}
+      </div>` : ''}
+
       <div id="th-runlog" class="th-runlog" hidden></div>
     </div>`;
 
-  det.querySelector("[data-th-back]")?.addEventListener("click", () => { TH.taskView = null; TH.showAllEvents = false; det.hidden = true; thRenderTasks(); });
-  det.querySelector("[data-th-allevents]")?.addEventListener("click", () => { TH.showAllEvents = true; thOpenTask(number, true); });
+  // 待派发场景下，绑定内置快捷派发面板交互
+  if (isPending) {
+    let selAgent = "pi";
+    const hosts = ((TH.hosts && TH.hosts.hosts) || []).filter(h => h.online !== false);
+    let selHost = (TH.hosts && TH.hosts.default) || (hosts[0] || {}).id || "";
+
+    det.querySelectorAll("[data-qd-agent]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        selAgent = btn.dataset.qdAgent;
+        det.querySelectorAll("[data-qd-agent]").forEach(b => b.classList.toggle("is-on", b === btn));
+      });
+    });
+
+    det.querySelectorAll("[data-qd-host]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        selHost = btn.dataset.qdHost;
+        det.querySelectorAll("[data-qd-host]").forEach(b => b.classList.toggle("is-on", b === btn));
+      });
+    });
+
+    const launchBtn = det.querySelector("#btn-qd-launch");
+    if (launchBtn) {
+      launchBtn.addEventListener("click", async () => {
+        launchBtn.disabled = true;
+        launchBtn.textContent = `正在调度…`;
+        try {
+          const r = await apiPost("/api/th/dispatch", { number: Number(issue.number), agent: selAgent, host: selHost });
+          const d = await r.json().catch(() => ({ ok: false, msg: "bad json" }));
+          TH.health = null;
+          if (!d.ok) {
+            uiNotice(d.msg || `派发失败`);
+            launchBtn.disabled = false;
+            launchBtn.textContent = `⚡ 开始执行任务`;
+            return;
+          }
+          uiNotice(`任务 #${issue.number} 已开始执行`);
+          thOpenTask(issue.number);
+        } catch (e) {
+          uiNotice("Error: " + e.message);
+          launchBtn.disabled = false;
+          launchBtn.textContent = `⚡ 开始执行任务`;
+        }
+      });
+    }
+  }
+
+  // Tab 切换逻辑
+  det.querySelectorAll("[data-dtab]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const tab = btn.dataset.dtab;
+      TH.detailTab = tab;
+      det.querySelectorAll("[data-dtab]").forEach(b => b.classList.toggle("active", b === btn));
+      const pConsole = $("th-tab-console-pane");
+      const pTimeline = $("th-tab-timeline-pane");
+      const pIssue = $("th-tab-issue-pane");
+      const pRuns = $("th-tab-runs-pane");
+      if (pConsole) pConsole.hidden = (tab !== "console");
+      if (pTimeline) pTimeline.hidden = (tab !== "timeline");
+      if (pIssue) pIssue.hidden = (tab !== "issue");
+      if (pRuns) pRuns.hidden = (tab !== "runs");
+    });
+  });
+
+  // 返回按钮
+  det.querySelector("[data-th-back]")?.addEventListener("click", () => {
+    TH.taskView = null; det.hidden = true; thRenderTasks();
+  });
+
+  // 操作按钮
   det.querySelectorAll("[data-th-act]").forEach(el => {
     if (el.tagName === "A") return;
     el.addEventListener("click", ev => {
       ev.stopPropagation();
-      const n = Number(el.dataset.num), kind = el.dataset.thAct;
+      const n = Number(el.dataset.num || issue.number), kind = el.dataset.thAct;
       if (kind === "dispatch") thDispatchModal(n, { title: el.dataset.title || "", after: () => thOpenTask(n) });
       if (kind === "restore") thSetState(n, "open");
       if (kind === "close") thSetState(n, "closed");
       if (kind === "cancel" && el.dataset.run) thCancel(el.dataset.run, () => thOpenTask(n));
-      if (kind === "resume" && el.dataset.run) thReply(el.dataset.run, n);
+      if (kind === "wake" && latest && latest.tmux_session) {
+        apiPost("/api/tmux/wake", { session: latest.tmux_session, pane: "" }).then(r => r.json()).then(res => {
+          uiNotice(res.ok ? `已触发唤醒推进` : (res.msg || `唤醒失败`));
+        });
+      }
     });
   });
-  det.querySelectorAll("[data-th-runlog]").forEach(el => el.addEventListener("click", () => thShowLog(el.dataset.thRunlog)));
-  if (latest && latest.tmux_session) {
-    det.querySelector("[data-th-session-open]")?.addEventListener("click", () => thOpenSession(latest.tmux_session));
-    const pullPreview = async () => {
-      const pre = $("th-task-preview");
-      if (!pre) { if (TH.timer) clearInterval(TH.timer); return; }
-      const r = await thGet(`/api/th/log?id=${encodeURIComponent(latest.id)}&lines=120`);
-      pre.textContent = r.ok === false ? (r.msg || t("th_no_log")) : (r.log || t("th_no_log"));
-      pre.scrollTop = pre.scrollHeight;
+
+  // 内嵌回复回车与发送
+  const replyInput = $("th-inline-input");
+  const replySendBtn = $("th-inline-send");
+  if (replyInput && replySendBtn && latest) {
+    const doSend = async () => {
+      const val = replyInput.value.trim();
+      if (!val) return;
+      replySendBtn.disabled = true;
+      replySendBtn.textContent = "…";
+      const r = await apiPost("/api/th/resume", { id: latest.id, text: val });
+      const res = await r.json().catch(() => ({ ok: false }));
+      replySendBtn.disabled = false;
+      replySendBtn.textContent = `发送`;
+      if (!res.ok) {
+        uiNotice(res.msg || `发送失败`);
+      } else {
+        replyInput.value = "";
+        uiNotice(`指令已送达智能体`);
+        thOpenTask(number, true);
+      }
     };
-    pullPreview();
-    if (TH.timer) { clearInterval(TH.timer); TH.timer = null; }
-    if (TH_ACTIVE.has(latest.state)) {
-      TH.timer = setInterval(() => {
-        const pre = $("th-task-preview");
-        if (!pre || TH.busy) { if (!pre) { clearInterval(TH.timer); TH.timer = null; } return; }
-        TH.busy = true; pullPreview().finally(() => { TH.busy = false; });
-      }, 4000);
+    replySendBtn.addEventListener("click", doSend);
+    replyInput.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); doSend(); } });
+  }
+
+  // 历史运行点击
+  det.querySelectorAll("[data-th-runlog]").forEach(el => el.addEventListener("click", () => thShowLog(el.dataset.thRunlog)));
+
+  // 实时终端捕获与控制
+  let autoScroll = true;
+  const btnScroll = $("btn-term-autoscroll");
+  if (btnScroll) {
+    btnScroll.addEventListener("click", () => {
+      autoScroll = !autoScroll;
+      btnScroll.textContent = autoScroll ? `滚屏: 开` : `滚屏: 关`;
+      btnScroll.classList.toggle("is-active", autoScroll);
+    });
+  }
+
+  const btnCtrlC = $("btn-term-ctrl-c");
+  if (btnCtrlC && latest && latest.tmux_session) {
+    btnCtrlC.addEventListener("click", async () => {
+      const r = await apiPost("/api/tmux/send", { session: latest.tmux_session, key: "C-c" });
+      const res = await r.json().catch(() => ({ ok: false }));
+      uiNotice(res.ok ? `已发送 Ctrl+C` : `发送失败`);
+    });
+  }
+
+  const btnEnter = $("btn-term-enter");
+  if (btnEnter && latest && latest.tmux_session) {
+    btnEnter.addEventListener("click", async () => {
+      const r = await apiPost("/api/tmux/send", { session: latest.tmux_session, text: "", enter: true });
+      const res = await r.json().catch(() => ({ ok: false }));
+      uiNotice(res.ok ? `已发送 Enter` : `发送失败`);
+    });
+  }
+
+  const btnWake = $("btn-term-wake");
+  if (btnWake && latest && latest.tmux_session) {
+    btnWake.addEventListener("click", async () => {
+      const r = await apiPost("/api/tmux/wake", { session: latest.tmux_session, pane: "" });
+      const res = await r.json().catch(() => ({ ok: false }));
+      uiNotice(res.ok ? `已发送唤醒` : `唤醒失败`);
+    });
+  }
+
+  const btnCopy = $("btn-term-copy");
+  if (btnCopy) {
+    btnCopy.addEventListener("click", () => {
+      const pre = $("th-term-output");
+      if (pre && navigator.clipboard) {
+        navigator.clipboard.writeText(pre.textContent || "");
+        uiNotice(`已复制终端文本`);
+      }
+    });
+  }
+
+  const pullTerminal = async () => {
+    const pre = $("th-term-output");
+    if (!pre) { if (TH.timer) clearInterval(TH.timer); return; }
+
+    if (latest && latest.tmux_session) {
+      // 优先从 Tmux 窗格实时捕获
+      const cap = await thGet(`/api/tmux/capture?target=${encodeURIComponent(latest.tmux_session)}&ansi=1&lines=180`);
+      if (cap && cap.ok && cap.capture) {
+        pre.innerHTML = ansiToHtml(Array.isArray(cap.capture) ? cap.capture.join("\n") : String(cap.capture));
+        if (autoScroll) pre.scrollTop = pre.scrollHeight;
+        return;
+      }
     }
+
+    // 备用：从 TaskHub Run 日志拉取
+    if (latest && latest.id) {
+      const r = await thGet(`/api/th/log?id=${encodeURIComponent(latest.id)}&lines=150`);
+      if (r && r.ok && r.log) {
+        pre.textContent = r.log;
+        if (autoScroll) pre.scrollTop = pre.scrollHeight;
+        return;
+      }
+    }
+
+    if (!latest) {
+      pre.textContent = `尚未派发智能体会话。`;
+    } else {
+      pre.textContent = `会话正在准备启动或等待捕获…`;
+    }
+  };
+
+  pullTerminal();
+  if (TH.timer) { clearInterval(TH.timer); TH.timer = null; }
+  if (activeRun) {
+    TH.timer = setInterval(() => {
+      const pre = $("th-term-output");
+      if (!pre || TH.busy) { if (!pre) { clearInterval(TH.timer); TH.timer = null; } return; }
+      TH.busy = true; pullTerminal().finally(() => { TH.busy = false; });
+    }, 3500);
   }
 }
 
@@ -9355,16 +9725,186 @@ function thShowLog(runId) {
   }, 3000);
 }
 
+/* ---------------- 全新「下发新任务」控制台模态框 ---------------- */
+async function thNewTaskModal() {
+  if (!TH.health || !TH.hosts) await thEnsureBase().catch(() => {});
+  document.querySelectorAll(".th-new-modal").forEach(el => el.remove());
+
+  const agents = (TH.health && TH.health.agents) || ["pi", "omp", "hermes"];
+  const agentMeta = {
+    pi: { name: "pi", desc: `敏捷代码修改 · 直接交付` },
+    omp: { name: "omp", desc: `通用研发智能体 · 会话交互` },
+    hermes: { name: "hermes", desc: `自动路由分派 · 复杂任务` }
+  };
+  const hosts = ((TH.hosts && TH.hosts.hosts) || []).filter(h => h.online !== false);
+
+  let curAgent = "pi";
+  let curHost = (TH.hosts && TH.hosts.default) || (hosts[0] || {}).id || "";
+
+  const modal = document.createElement("div");
+  modal.className = "ui-modal th-new-modal";
+  modal.innerHTML = `
+    <div class="th-dlg" role="dialog" aria-modal="true" aria-labelledby="th-new-title" tabindex="-1">
+      <div class="th-dlg-head">
+        <div class="th-dlg-head-main">
+          <span class="th-dlg-kicker">智能体任务调度</span>
+          <h3 class="th-dlg-title" id="th-new-title">下发新任务</h3>
+        </div>
+        <button class="th-dlg-x" type="button" data-close="1" aria-label="Close">✕</button>
+      </div>
+      <div class="th-dlg-body">
+        <div class="th-field">
+          <span class="th-field-label">任务标题</span>
+          <div class="th-tags-row">
+            <button class="th-tag-btn" type="button" data-tag="[Bug]">修复 Bug</button>
+            <button class="th-tag-btn" type="button" data-tag="[Feature]">新功能</button>
+            <button class="th-tag-btn" type="button" data-tag="[Refactor]">代码重构</button>
+            <button class="th-tag-btn" type="button" data-tag="[Test]">测试验证</button>
+          </div>
+          <input type="text" class="th-input-text" id="th-new-input-title" placeholder="${escAttr(t("nt_ph_title"))}" maxlength="160" autocomplete="off" />
+        </div>
+
+        <div class="th-field">
+          <span class="th-field-label">任务需求 / Prompt 描述</span>
+          <textarea class="th-textarea" id="th-new-input-body" placeholder="${escAttr(t("nt_ph_body"))}"></textarea>
+        </div>
+
+        <div class="th-field">
+          <span class="th-field-label">执行智能体</span>
+          <div class="th-opts" style="display:flex;gap:8px;">
+            ${agents.map(a => {
+              const meta = agentMeta[a] || { name: a, desc: a };
+              return `
+                <div class="th-agent-card${a === curAgent ? ' is-on' : ''}" data-sel-agent="${escAttr(a)}">
+                  <div class="th-agent-card-title">
+                    <span>${escHtml(meta.name)}</span>
+                    <i class="th-opt-dot"></i>
+                  </div>
+                  <div class="th-agent-card-desc">${escHtml(meta.desc)}</div>
+                </div>`;
+            }).join("")}
+          </div>
+        </div>
+
+        <div class="th-field">
+          <span class="th-field-label">执行主机</span>
+          <div class="th-opts">
+            ${hosts.map(h => `
+              <button class="th-opt${h.id === curHost ? ' is-on' : ''}" type="button" data-sel-host="${escAttr(h.id)}">
+                <i class="th-opt-dot"></i><span>${escHtml(h.label || h.id)}</span>
+              </button>`).join("") || `<span class="th-field-none">本地</span>`}
+          </div>
+        </div>
+      </div>
+      <div class="th-dlg-foot">
+        <button class="th-btn" type="button" data-close="1">取消</button>
+        <button class="th-btn th-btn-primary" type="button" id="btn-th-new-submit">立即下发任务 ⚡</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+  const dlg = modal.querySelector(".th-dlg");
+
+  const close = () => {
+    document.removeEventListener("keydown", onKey);
+    modal.remove();
+  };
+  const onKey = ev => { if (ev.key === "Escape") { ev.stopPropagation(); close(); } };
+  document.addEventListener("keydown", onKey);
+  modal.addEventListener("click", ev => { if (ev.target === modal) close(); });
+  modal.querySelectorAll("[data-close]").forEach(el => el.addEventListener("click", close));
+
+  // 快捷标签添加前缀
+  const titleInput = modal.querySelector("#th-new-input-title");
+  modal.querySelectorAll("[data-tag]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const tag = btn.dataset.tag;
+      if (!titleInput.value.startsWith(tag)) {
+        titleInput.value = `${tag} ${titleInput.value.replace(/^\[[^\]]+\]\s*/, "")}`;
+      }
+      titleInput.focus();
+    });
+  });
+
+  // 智能体选择
+  modal.querySelectorAll("[data-sel-agent]").forEach(card => {
+    card.addEventListener("click", () => {
+      curAgent = card.dataset.selAgent;
+      modal.querySelectorAll("[data-sel-agent]").forEach(c => c.classList.toggle("is-on", c === card));
+    });
+  });
+
+  // 主机选择
+  modal.querySelectorAll("[data-sel-host]").forEach(opt => {
+    opt.addEventListener("click", () => {
+      curHost = opt.dataset.selHost;
+      modal.querySelectorAll("[data-sel-host]").forEach(o => o.classList.toggle("is-on", o === opt));
+    });
+  });
+
+  // 提交
+  const submitBtn = modal.querySelector("#btn-th-new-submit");
+  submitBtn.addEventListener("click", async () => {
+    const title = titleInput.value.trim();
+    const body = modal.querySelector("#th-new-input-body").value.trim();
+    if (!title) {
+      uiNotice(`请输入任务标题`);
+      titleInput.focus();
+      return;
+    }
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = `正在调度下发…`;
+
+    try {
+      const r = await apiPost("/api/th/new", { title, body, agent: curAgent, host: curHost });
+      const res = await r.json().catch(() => ({ ok: false, msg: `网络错误` }));
+      if (!res.ok) {
+        uiNotice(res.msg || `下发任务失败`);
+        submitBtn.disabled = false;
+        submitBtn.textContent = `立即下发任务 ⚡`;
+        return;
+      }
+
+      close();
+      uiNotice(`任务 #${res.number || ""} 已下发`);
+
+      // 切到任务 Tab 并刷新打开该任务
+      const vTasks = $("tmux-view-tasks");
+      const vSessions = $("tmux-view-sessions");
+      if (vTasks) { vTasks.hidden = false; vTasks.style.display = ""; }
+      if (vSessions) { vSessions.hidden = true; vSessions.style.display = "none"; }
+      $("tmux-subnav")?.querySelectorAll(".page-subnav-btn").forEach(b => {
+        b.classList.toggle("active", b.dataset.ttab === "tasks");
+      });
+
+      await thRenderTasks();
+      if (res.number) thOpenTask(Number(res.number));
+    } catch (e) {
+      uiNotice(`创建失败: ` + e.message);
+      submitBtn.disabled = false;
+      submitBtn.textContent = `立即下发任务 ⚡`;
+    }
+  });
+
+  setTimeout(() => titleInput.focus(), 50);
+}
+
 /* 派遣弹窗：执行者 / 机器 → 确认。挂在 body 上，手机为底部滑层。 */
-function thDispatchModal(number, opts = {}) {
+async function thDispatchModal(number, opts = {}) {
   const after = typeof opts === "function" ? opts : (opts.after || null);
   const title = (opts && opts.title) || "";
+  if (!TH.health || !TH.hosts) await thEnsureBase().catch(() => {});
   document.querySelectorAll(".th-dispatch-modal").forEach(el => el.remove());
   const agents = (TH.health && TH.health.agents) || ["pi"];
   const labels = (TH.health && TH.health.agent_labels) || {};
-  const defAgent = (TH.health && TH.health.default_agent) || agents[0] || "";
   const hosts = ((TH.hosts && TH.hosts.hosts) || []).filter(h => h.online !== false);
-  const defHost = (TH.hosts && TH.hosts.default) || (hosts[0] || {}).id || "";
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(TH_DISPATCH_KEY) || "{}") || {}; } catch (e) { saved = {}; }
+  const defAgent = agents.includes(saved.agent) ? saved.agent
+    : ((TH.health && TH.health.default_agent) || agents[0] || "");
+  const defHost = hosts.some(h => h.id === saved.host) ? saved.host
+    : ((TH.hosts && TH.hosts.default) || (hosts[0] || {}).id || "");
   let agent = defAgent, hostId = defHost;
   const optBtn = (field, val, text, on) => `
     <button class="th-opt${on ? " is-on" : ""}" type="button" data-th-field="${field}"
@@ -9422,9 +9962,10 @@ function thDispatchModal(number, opts = {}) {
       const r = await apiPost("/api/th/dispatch", { number: Number(number), agent, host: hostId });
       const d = await r.json().catch(() => ({ ok: false, msg: "bad json" }));
       TH.health = null;
-      if (!d.ok) { uiNotice(d.msg || "派发失败"); go.disabled = false; go.textContent = label; return; }
+      if (!d.ok) { uiNotice(d.msg || `派发失败`); go.disabled = false; go.textContent = label; return; }
+      try { localStorage.setItem(TH_DISPATCH_KEY, JSON.stringify({ agent, host: hostId })); } catch (e) {}
       close();
-      if (d.needs_repo) uiNotice("已发到 Telegram，等你确认代码仓库");
+      if (d.needs_repo) uiNotice(`已发到 Telegram，等你确认代码仓库`);
       if (after) after(); else thRenderTasks();
     } catch (err) {
       uiNotice("Error: " + err.message);
@@ -9439,23 +9980,23 @@ function thDispatchModal(number, opts = {}) {
 async function thSetState(number, state) {
   const r = await apiPost("/api/th/state", { number: Number(number), state });
   const d = await r.json().catch(() => ({ ok: false, msg: "bad json" }));
-  if (!d.ok) { uiNotice(d.msg || "操作失败"); return; }
+  if (!d.ok) { uiNotice(d.msg || `操作失败`); return; }
   TH.taskView ? thOpenTask(TH.taskView) : thRenderTasks();
 }
 
 async function thCancel(runId, after) {
   const r = await apiPost("/api/th/cancel", { id: runId });
   const d = await r.json().catch(() => ({ ok: false }));
-  if (!d.ok) { uiNotice(d.msg || "取消失败"); return; }
+  if (!d.ok) { uiNotice(d.msg || `取消失败`); return; }
   after ? after() : (TH.taskView ? thOpenTask(TH.taskView) : thRenderTasks());
 }
 
 async function thReply(runId, number) {
-  const text = window.prompt("给 agent 的指令");
+  const text = window.prompt(`给 agent 的指令`);
   if (!text) return;
   const r = await apiPost("/api/th/resume", { id: runId, text });
   const d = await r.json().catch(() => ({ ok: false }));
-  if (!d.ok) { alert(d.msg || "发送失败"); return; }
+  if (!d.ok) { alert(d.msg || `发送失败`); return; }
   TH.taskView ? thOpenTask(number) : thRenderTasks();
 }
 

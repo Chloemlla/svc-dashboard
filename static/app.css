@@ -7548,10 +7548,6 @@ body.is-static .mp-pv-status-pill.mono span:not(.mp-pv-status-dot) {
 
 
 /* ===== TaskHub: 活动页内的 任务 / 日志 ===== */
-.th-filters { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
-.th-search { flex: 1 1 160px; min-width: 120px; background: var(--bg-input); border: 1px solid var(--border);
-  border-radius: 999px; padding: 6px 12px; color: var(--text); font-size: 12.5px; outline: none; }
-.th-search:focus { border-color: var(--c-ok); }
 .th-list { display: flex; flex-direction: column; gap: 8px; }
 .th-card { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between;
   background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; padding: 11px 13px; }
@@ -7563,7 +7559,6 @@ body.is-static .mp-pv-status-pill.mono span:not(.mp-pv-status-dot) {
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .th-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 5px; color: var(--text-dim, var(--text-soft));
   font-size: 11px; }
-.th-card-side { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; flex: 0 0 auto; }
 .th-chip { font-size: 10.5px; display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; }
 .th-chip.primary { border-color: color-mix(in srgb, var(--c-ok) 45%, var(--border)); color: var(--c-ok); }
 .th-on { color: var(--c-ok); }
@@ -7571,30 +7566,22 @@ body.is-static .mp-pv-status-pill.mono span:not(.mp-pv-status-dot) {
 .th-st.th-running, .th-st.th-starting { color: var(--c-ok); }
 .th-st.th-waiting_user, .th-st.th-queued { color: var(--c-warn); }
 .th-st.th-failed, .th-st.th-lost { color: var(--c-bad, #e5534b); }
-.th-sheet { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; margin-bottom: 10px; }
-.th-sheet-title { font-weight: 650; font-size: 13px; margin-bottom: 8px; color: var(--text-title); }
-.th-sheet-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 7px; }
-.th-sheet-label { color: var(--text-soft); font-size: 11.5px; min-width: 52px; }
-.th-sheet-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 .th-log-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
 .th-log { background: var(--bg-deep); border: 1px solid var(--border); border-radius: 10px; padding: 12px;
   max-height: 58vh; overflow: auto; white-space: pre-wrap; word-break: break-word;
   color: var(--text-soft); font: 11.5px/1.55 var(--font-mono, ui-monospace, monospace); margin: 0; }
 @media (max-width: 640px) {
   .th-card { flex-direction: column; gap: 7px; }
-  .th-card-side { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; }
   .th-log { max-height: 52vh; }
 }
 
 /* TaskHub 卡片可读性 */
 .th-card { padding: 12px 14px; gap: 14px; }
-.th-card-side { min-width: 96px; }
 .th-title { font-size: 14px; line-height: 1.35; }
 .th-excerpt { color: var(--text); opacity: .82; font-size: 12px; line-height: 1.55; margin-top: 5px; -webkit-line-clamp: 3; }
 .th-meta { color: var(--text-soft); opacity: .95; margin-top: 6px; font-size: 11px; }
 .th-chip.primary { background: color-mix(in srgb, var(--c-ok) 16%, transparent); font-weight: 650; }
 .th-list { gap: 10px; }
-@media (max-width: 640px) { .th-card-side { min-width: 0; } }
 
 /* ================= 统一页面外壳（page shell）=================
    所有页面共用：页头(page-head) + 分段子标签(page-subnav) + 工具行(page-tools) + 卡片(page-card)
@@ -7761,18 +7748,13 @@ body.is-static .mp-pv-status-pill.mono span:not(.mp-pv-status-dot) {
 .th-st.th-pending { color: var(--text-soft); }
 .th-st.th-succeeded { color: var(--c-ok, #58b368); }
 .th-st.th-cancelled { color: var(--text-soft); }
-.th-filters .th-refresh { height: 26px; }
 .th-run-row .th-run-log-link { color: var(--c-ok, #58b368); text-decoration: underline; }
 
 /* 详情 */
-.th-detail-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.th-detail-title { margin: 2px 0 6px; font-size: 16px; font-weight: 700; color: var(--text-title); line-height: 1.35; }
 .th-stages { display: flex; gap: 4px; flex-wrap: wrap; margin: 12px 0 2px; }
 .th-stage { font-size: 10px; padding: 2px 7px; border-radius: 999px; background: var(--bg-hover); color: var(--text-soft); }
 .th-stage.done { color: var(--c-ok, #58b368); }
 .th-stage.now { background: color-mix(in srgb, var(--c-ok, #58b368) 20%, transparent); color: var(--text-title); font-weight: 650; }
-.th-detail-actions { display: flex; gap: 6px; flex-wrap: wrap; margin: 14px 0 4px; }
-.th-section-title { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-soft); margin: 18px 0 8px; }
 .th-timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .th-ev { display: grid; grid-template-columns: 42px 68px 1fr; gap: 8px; align-items: baseline; padding: 5px 0; border-bottom: 1px dashed var(--border); font-size: 12px; }
 .th-ev:last-child { border-bottom: 0; }
@@ -7792,13 +7774,9 @@ body.is-static .mp-pv-status-pill.mono span:not(.mp-pv-status-dot) {
   .th-run-row span:nth-child(3) { display: none; }
 }
 
-/* 任务详情：状态徽标贴标题、停止态进度条转灰、时间线折叠 */
-.th-detail-title { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.th-detail-title .th-st { font-size: 10.5px; padding: 2px 8px; border-radius: 999px; background: var(--bg-hover); font-weight: 650; }
 .th-progress.stopped i { background: var(--text-soft); opacity: .5; }
 .th-ev-more { grid-template-columns: 1fr; }
 .th-ev-more .chip { height: 26px; font-size: 11px; }
-.th-detail-head .th-detail-state { margin-left: auto; font-size: 10.5px; padding: 2px 9px; border-radius: 999px; background: var(--bg-hover); font-weight: 650; }
 @media (max-width: 700px) {
   #tmux-panel { padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px)); }
 }
@@ -7821,24 +7799,11 @@ body.is-static .mp-pv-status-pill.mono span:not(.mp-pv-status-dot) {
 .th-row .th-st { font-size: 10px; padding: 1px 7px; border-radius: 999px; background: var(--bg-hover); }
 .th-row .th-progress { margin: 6px 0 2px; }
 
-/* 右侧详情：顶部固定操作条 + 内容随页面滚动 */
-.th-detail-bar {
-  position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  padding: 10px 0; margin-bottom: 10px;
-  background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(10px);
-  border-bottom: 1px solid var(--border);
-}
-.th-bar-title { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; }
-.th-bar-name { font-size: 13.5px; font-weight: 650; color: var(--text-title); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.th-bar-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-.th-bar-actions .chip { height: 28px; font-size: 11.5px; }
 .th-back { display: none; }
 
 /* 详情正文不再内部滚动 */
 .th-detail-body .th-body, .th-detail-body { max-height: none; overflow: visible; }
 .th-detail-body .th-log { max-height: 260px; }
-.th-session-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
-.th-session-line .th-st { font-size: 10.5px; padding: 2px 8px; border-radius: 999px; background: var(--bg-hover); }
 
 @media (max-width: 700px) {
   .th-split { grid-template-columns: 1fr; }
@@ -7849,11 +7814,8 @@ body.is-static .mp-pv-status-pill.mono span:not(.mp-pv-status-dot) {
   .th-split.mobile-detail .th-col-detail { display: block; }
 }
 .th-split { grid-template-columns: minmax(300px, 360px) minmax(0, 1fr); }
-.th-bar-actions .chip.primary { background: var(--chip-on-bg, #f2f2f2); color: var(--chip-on-tx, #111); border-color: transparent; font-weight: 700; }
-.th-bar-actions .chip.primary { background: var(--text-title); color: var(--bg); border-color: var(--text-title); }
 @media (max-width: 700px) {
   #tmux-view-tasks, .th-col-detail, #th-detail { padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
-  .th-detail-bar { top: 0; }
 }
 
 /* ============================================================
@@ -7869,8 +7831,6 @@ body.is-static .mp-pv-status-pill.mono span:not(.mp-pv-status-dot) {
 }
 
 /* ---- 左列 ---- */
-#tmux-panel .th-filters { gap: 8px; margin-bottom: 10px; }
-#tmux-panel .th-search { height: 30px; font-size: 12.5px; padding: 0 12px; }
 #tmux-panel .th-group { margin-bottom: 18px; }
 #tmux-panel .th-group-head { padding: 0 2px 8px; gap: 8px; }
 #tmux-panel .th-group-title { font-size: 11px; letter-spacing: .08em; }
@@ -7910,35 +7870,16 @@ body.is-static .mp-pv-status-pill.mono span:not(.mp-pv-status-dot) {
 #tmux-panel .th-row .th-meta { font-size: 10.5px; color: var(--text-ghost, var(--text-soft)); margin-top: 4px; gap: 6px; }
 #tmux-panel .th-row .th-progress { height: 2px; margin: 7px 0 2px; }
 #tmux-panel .th-row-actions { gap: 6px; margin-top: 7px; }
-#tmux-panel .th-row-actions .chip { height: 24px; font-size: 10.5px; padding: 0 9px; }
+#tmux-panel .th-row-actions .th-btn { height: 24px; font-size: 10.5px; padding: 0 9px; border-radius: 6px; }
 
-/* ---- 右列：顶部操作条 ---- */
-#tmux-panel .th-detail-bar {
-  padding: 11px 0; gap: 12px; margin-bottom: 14px;
-  border-bottom: 1px solid var(--th-line);
-}
-#tmux-panel .th-bar-title { gap: 9px; }
-#tmux-panel .th-bar-name { font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
-#tmux-panel .th-bar-actions { gap: 6px; }
-#tmux-panel .th-bar-actions .chip { height: 28px; font-size: 11.5px; padding: 0 11px; border-radius: 999px; }
-#tmux-panel .th-back { height: 28px; }
 
 /* ---- 右列：正文排版 ---- */
 #tmux-panel .th-detail-body { max-width: 940px; }
-#tmux-panel .th-detail-body > .th-meta { font-size: 11px; gap: 7px; color: var(--text-soft); margin-bottom: 2px; }
 #tmux-panel .th-stages { gap: 5px; margin: 14px 0 6px; }
 #tmux-panel .th-stage { font-size: 10px; padding: 2.5px 8px; border-radius: 999px; }
 #tmux-panel .th-progress { height: 3px; margin: 6px 0 6px; }
 #tmux-panel .th-now { font-size: 11.5px; color: var(--text-soft); line-height: 1.5; }
 
-#tmux-panel .th-section-title {
-  display: flex; align-items: center; gap: 10px;
-  margin: 22px 0 10px; font-size: 11px; font-weight: 700;
-  letter-spacing: .08em; text-transform: uppercase; color: var(--text-soft);
-}
-#tmux-panel .th-section-title::after {
-  content: ""; flex: 1 1 auto; height: 1px; background: var(--th-line);
-}
 
 #tmux-panel .th-timeline { gap: 0; }
 #tmux-panel .th-ev {
@@ -7960,7 +7901,6 @@ body.is-static .mp-pv-status-pill.mono span:not(.mp-pv-status-dot) {
   padding: 8px 11px; border-radius: 10px; font-size: 11.5px; gap: 10px;
 }
 #tmux-panel .th-run-row:hover { background: var(--bg-hover); }
-#tmux-panel .th-session-line { gap: 10px; margin-bottom: 10px; }
 #tmux-panel .th-log {
   font-size: 11.5px; line-height: 1.6; border-radius: 10px;
   border: 1px solid var(--th-line); background: var(--bg-deep);
@@ -7969,7 +7909,6 @@ body.is-static .mp-pv-status-pill.mono span:not(.mp-pv-status-dot) {
 @media (max-width: 700px) {
   #tmux-panel { --th-gap: 10px; --th-pad-x: 12px; --th-pad-y: 11px; }
   #tmux-panel .th-row .th-title { font-size: 13px; }
-  #tmux-panel .th-bar-actions .chip { height: 26px; font-size: 11px; }
   #tmux-panel .th-detail-body { max-width: none; }
   #tmux-panel .th-ev { grid-template-columns: 40px 56px minmax(0, 1fr); gap: 8px; }
 }
@@ -8004,23 +7943,11 @@ body.is-static .mp-pv-status-pill.mono span:not(.mp-pv-status-dot) {
 #tmux-panel .th-ev-empty {
   display: block; color: var(--text-ghost, var(--text-soft)); font-size: 12px;
 }
-#tmux-panel .th-section-title {
-  font-size: 11.5px; letter-spacing: .07em;
-  color: color-mix(in srgb, var(--text) 72%, transparent);
-  margin: 24px 0 10px;
-}
-#tmux-panel .th-section-title::after { background: var(--th-line); opacity: .8; }
 #tmux-panel .th-ev-kind { text-transform: lowercase; }
-#tmux-panel .th-bar-actions .chip.primary {
-  background: var(--accent-blue-bg); color: var(--accent-blue-tx);
-  border: 1px solid var(--accent-blue-bd); font-weight: 650;
-}
-#tmux-panel .th-bar-actions .chip.primary:hover { background: var(--accent-blue-hover); }
 #tmux-panel .th-row .th-title { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
 #tmux-panel .th-row .th-excerpt { color: color-mix(in srgb, var(--text-soft) 92%, var(--text)); opacity: 1; }
 #tmux-panel .th-row .th-row-time { opacity: .85; }
 #tmux-panel .th-row.selected .th-title { color: var(--text-title); }
-#tmux-panel .th-detail-bar { background: color-mix(in srgb, var(--bg-panel) 94%, transparent); }
 
 /* 精修第三轮：底部留白、时间戳不折行、终端可读性、按钮主次 */
 #tmux-panel { padding-bottom: 28px; }
@@ -8031,12 +7958,6 @@ body.is-static .mp-pv-status-pill.mono span:not(.mp-pv-status-dot) {
   color: color-mix(in srgb, var(--text) 86%, var(--text-soft));
 }
 #tmux-panel .th-log { padding: 10px 12px; }
-#tmux-panel .th-bar-actions .chip { background: var(--bg-hover); color: var(--text-soft); border: 1px solid var(--th-line); }
-#tmux-panel .th-bar-actions .chip:hover { color: var(--text-title); border-color: var(--border); }
-#tmux-panel .th-bar-actions .chip.primary, #tmux-panel .th-bar-actions .chip.primary:hover {
-  background: var(--accent-blue-bg); color: var(--accent-blue-tx); border-color: var(--accent-blue-bd);
-}
-#tmux-panel .th-bar-actions .chip.danger { color: var(--c-warn, #d98b3a); }
 @media (max-width: 700px) { #tmux-panel { padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px)); } }
 
 /* ===== 静态快照里的任务页：只有标题+摘要，详情打码，无任何操作 ===== */
@@ -8097,3 +8018,512 @@ body.is-static #tmux-panel .th-detail-body { padding-top: 2px; }
 }
 .ui-dialog.tmux-new-dialog.nt-dialog { width: min(920px, 96vw) !important; max-width: none; }
 .ui-dialog.tmux-new-dialog.nt-dialog .tmux-new-body { display: none; }
+
+/* ============================================================
+   任务页 v2：详情页头 + 区块卡片 + 派遣弹窗
+   - 详情：状态/编号/标题/元信息/操作 = 顶部一屏可读的页头；正文按区块分卡
+   - 派遣：从列表或详情点击后弹出（挂 body，手机为底部滑层），不再内联插在列表顶部
+   间距走 4/8/12/16，字号 10.5/11/12/12.5/13/17，全部复用主题 token。
+   ============================================================ */
+
+/* ---- 按钮（任务页与弹窗共用；弹窗不在 #tmux-panel 作用域内 ---- */
+.th-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; box-sizing: border-box;
+  height: 30px; padding: 0 11px; border-radius: 8px;
+  font-family: inherit; font-size: 12px; font-weight: 600; line-height: 1; letter-spacing: .01em;
+  color: var(--text-soft); background: transparent; border: 1px solid transparent;
+  cursor: pointer; white-space: nowrap; text-decoration: none;
+  transition: background .12s, border-color .12s, color .12s, box-shadow .12s;
+}
+.th-btn:hover { background: var(--bg-hover); color: var(--text-title); }
+.th-btn:active { background: var(--bg-active); }
+.th-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.th-btn[disabled] { opacity: .55; cursor: default; box-shadow: none; }
+/* 唯一主操作：实心胶囊；其余动作一律无边框幽灵按钮，避免一排描边方块 */
+.th-btn-primary {
+  height: 32px; padding: 0 18px; border-radius: 999px;
+  background: var(--accent); border-color: transparent; color: #fff; font-weight: 650; letter-spacing: .015em;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .16), 0 6px 16px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.th-btn-primary:hover { background: color-mix(in srgb, var(--accent) 88%, #fff); color: #fff; }
+.th-btn-primary:active { background: color-mix(in srgb, var(--accent) 88%, #000); }
+.th-btn-danger { color: var(--c-red); }
+.th-btn-danger:hover { background: color-mix(in srgb, var(--c-red) 12%, transparent); color: var(--c-red); }
+.th-btn-sm { height: 26px; padding: 0 9px; font-size: 11.5px; border-radius: 7px; }
+.th-btn-sm.th-btn-primary { height: 26px; padding: 0 13px; border-radius: 999px; box-shadow: none; }
+
+/* ---- 详情页头 ---- */
+#tmux-panel .th-head { padding-bottom: 14px; margin-bottom: 4px; border-bottom: 1px solid var(--th-line); }
+#tmux-panel .th-head-line {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap; min-width: 0;
+  font-size: 11.5px; color: var(--text-soft);
+}
+#tmux-panel .th-head-num { font-weight: 600; color: var(--text-ghost); font-variant-numeric: tabular-nums; }
+#tmux-panel .th-head-line > span:not(.th-badge):not(.th-head-num) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#tmux-panel .th-head-sep { flex: 0 0 auto; width: 2.5px; height: 2.5px; border-radius: 50%; background: var(--text-ghost); opacity: .55; }
+#tmux-panel .th-head-title {
+  margin: 10px 0 0; max-width: 42ch;
+  font-size: 21px; font-weight: 700; line-height: 1.28;
+  letter-spacing: -.015em; color: var(--text-title); overflow-wrap: anywhere;
+}
+#tmux-panel .th-head-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 13px; }
+
+#tmux-panel .th-icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0; border-radius: 8px; box-sizing: border-box;
+  border: 1px solid transparent; background: transparent;
+  color: var(--text-soft); font-family: inherit; font-size: 14px; line-height: 1; text-decoration: none;
+  cursor: pointer; transition: background .12s, color .12s;
+}
+#tmux-panel .th-icon-btn:hover { background: var(--bg-hover); color: var(--text-title); }
+#tmux-panel .th-icon-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+#tmux-panel .th-head-link { margin-left: auto; }
+#tmux-panel .th-back { display: none; }
+
+/* 状态徽标：小圆点 + 文案，异常态才染色 */
+#tmux-panel .th-badge {
+  display: inline-flex; align-items: center; gap: 5px; height: 21px; padding: 0 8px;
+  border-radius: 999px; border: 1px solid var(--th-line); background: var(--bg-hover);
+  font-size: 10.5px; font-weight: 650; letter-spacing: .01em; color: var(--text-soft);
+}
+#tmux-panel .th-badge::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .9; }
+#tmux-panel .th-badge.is-running,
+#tmux-panel .th-badge.is-succeeded {
+  color: var(--c-green); background: color-mix(in srgb, var(--c-green) 12%, transparent);
+  border-color: color-mix(in srgb, var(--c-green) 26%, transparent);
+}
+#tmux-panel .th-badge.is-starting,
+#tmux-panel .th-badge.is-queued { color: var(--c-blue); background: color-mix(in srgb, var(--c-blue) 12%, transparent); border-color: color-mix(in srgb, var(--c-blue) 26%, transparent); }
+#tmux-panel .th-badge.is-waiting_user { color: var(--c-warn); background: color-mix(in srgb, var(--c-warn) 13%, transparent); border-color: color-mix(in srgb, var(--c-warn) 30%, transparent); }
+#tmux-panel .th-badge.is-failed,
+#tmux-panel .th-badge.is-lost { color: var(--c-red); background: color-mix(in srgb, var(--c-red) 12%, transparent); border-color: color-mix(in srgb, var(--c-red) 26%, transparent); }
+#tmux-panel .th-badge.is-closed,
+#tmux-panel .th-badge.is-cancelled,
+#tmux-panel .th-badge.is-pending { color: var(--text-soft); }
+
+/* ---- 正文：文档式分节（不套卡片边框，靠留白与细线分节） ---- */
+#tmux-panel .th-detail-body { padding-top: 14px; }
+#tmux-panel .th-sec { padding-top: 18px; margin-top: 18px; border-top: 1px solid var(--th-line); }
+#tmux-panel .th-sec:first-child { padding-top: 0; margin-top: 0; border-top: 0; }
+#tmux-panel .th-sec-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+#tmux-panel .th-sec-title {
+  font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--text) 62%, transparent);
+}
+#tmux-panel .th-sec-note { font-size: 10.5px; color: var(--text-ghost); font-variant-numeric: tabular-nums; }
+#tmux-panel .th-sec-head .th-btn { margin-left: auto; }
+#tmux-panel .th-note { margin: 0; font-size: 12.5px; line-height: 1.62; color: var(--text-soft); }
+#tmux-panel .th-prose {
+  max-width: 74ch; font-size: 13px; line-height: 1.78; color: var(--text);
+  white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 2;
+}
+#tmux-panel .th-sess {
+  font-family: var(--font-mono, ui-monospace, monospace); font-size: 10.5px; line-height: 1.4;
+  color: var(--text-soft); background: var(--bg-deep); border: 1px solid var(--th-line);
+  border-radius: 6px; padding: 2.5px 7px; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#tmux-panel .th-sec .th-log { max-height: 42vh; }
+
+/* 阶段轨：点 + 连线，替代一排药丸 */
+#tmux-panel .th-rail { display: flex; align-items: flex-start; gap: 0; list-style: none; margin: 0 0 12px; padding: 0; }
+#tmux-panel .th-rail-i {
+  position: relative; flex: 1 1 0; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  font-size: 9.5px; letter-spacing: .03em; text-transform: uppercase;
+  color: var(--text-ghost); text-align: center;
+}
+#tmux-panel .th-rail-i::before {
+  content: ""; position: absolute; top: 4px; left: -50%; width: 100%; height: 1px;
+  background: var(--th-line);
+}
+#tmux-panel .th-rail-i:first-child::before { display: none; }
+#tmux-panel .th-rail-dot {
+  position: relative; z-index: 1; width: 9px; height: 9px; border-radius: 50%; box-sizing: border-box;
+  background: var(--bg-panel); border: 1.5px solid color-mix(in srgb, var(--text) 24%, transparent);
+}
+#tmux-panel .th-rail-i.done .th-rail-dot { background: var(--c-green); border-color: var(--c-green); }
+#tmux-panel .th-rail-i.done::before { background: color-mix(in srgb, var(--c-green) 45%, transparent); }
+#tmux-panel .th-rail-i.done span { color: var(--text-soft); }
+#tmux-panel .th-rail-i.now .th-rail-dot {
+  background: var(--accent); border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+#tmux-panel .th-rail-i.now span { color: var(--text-title); font-weight: 650; }
+
+/* 历史执行：行列表，无边框方块 */
+#tmux-panel .th-runs { display: flex; flex-direction: column; }
+#tmux-panel .th-run-row {
+  display: grid; grid-template-columns: 76px 88px 64px minmax(0, 1fr) auto; align-items: center; gap: 10px;
+  padding: 9px 2px; border: 0; border-bottom: 1px solid var(--th-line); border-radius: 0;
+  font-size: 11.5px; color: var(--text-soft); cursor: pointer;
+}
+#tmux-panel .th-run-row:last-child { border-bottom: 0; }
+#tmux-panel .th-run-row:hover { background: color-mix(in srgb, var(--bg-hover) 55%, transparent); }
+#tmux-panel .th-run-state { color: var(--text); }
+#tmux-panel .th-run-stage { color: var(--text-ghost); }
+#tmux-panel .th-run-time { color: var(--text-ghost); font-variant-numeric: tabular-nums; }
+
+/* 桌面：左右两列各自独立滚动 */
+@media (min-width: 701px) {
+  #tmux-panel .th-back { display: none; }
+  #tmux-panel .th-split { align-items: stretch; height: var(--th-split-h, calc(100vh - 220px)); min-height: 360px; }
+  #tmux-panel .th-col-list,
+  #tmux-panel .th-col-detail {
+    height: 100%; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+    scrollbar-gutter: stable; padding-right: 6px; padding-bottom: 10px;
+  }
+  #tmux-panel .th-head {
+    position: sticky; top: 0; z-index: 3;
+    background: color-mix(in srgb, var(--bg) 94%, transparent);
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  }
+  #tmux-panel .th-detail-body { max-width: 900px; }
+}
+
+@media (max-width: 700px) {
+  #tmux-panel .th-back { display: inline-flex; }
+  #tmux-panel .th-head { padding-bottom: 12px; }
+  #tmux-panel .th-head-title { font-size: 18px; margin-top: 8px; }
+  #tmux-panel .th-head-actions { width: 100%; gap: 6px; }
+  #tmux-panel .th-head-actions .th-btn { flex: 1 1 auto; height: 34px; font-size: 12.5px; border-radius: 9px; }
+  #tmux-panel .th-head-actions .th-btn-primary { flex: 1.6 1 118px; border-radius: 999px; }
+  #tmux-panel .th-run-row { grid-template-columns: 1fr 1fr auto; }
+  #tmux-panel .th-run-stage { display: none; }
+}
+/* ---- 派遣弹窗 ---- */
+.th-dispatch-modal { z-index: 1000; }
+.th-dispatch-modal .th-dlg {
+  display: flex; flex-direction: column; box-sizing: border-box;
+  width: min(430px, 100%); max-height: min(86vh, 620px);
+  background: var(--bg-elev); color: var(--text);
+  border: 1px solid var(--border); border-radius: 16px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, .42);
+  overflow: hidden; outline: none;
+  animation: thDlgIn .16s ease-out;
+}
+.th-dispatch-modal .th-dlg:focus, .th-dispatch-modal .th-dlg:focus-visible { outline: none; }
+@keyframes thDlgIn { from { opacity: 0; transform: translateY(6px) scale(.985); } to { opacity: 1; transform: none; } }
+.th-dispatch-modal .th-dlg-head { display: flex; align-items: flex-start; gap: 10px; padding: 16px 16px 12px; }
+.th-dispatch-modal .th-dlg-head-main { min-width: 0; }
+.th-dispatch-modal .th-dlg-kicker { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-ghost); }
+.th-dispatch-modal .th-dlg-title {
+  display: flex; align-items: baseline; gap: 7px; margin: 5px 0 0;
+  font-size: 15px; font-weight: 680; line-height: 1.35; color: var(--text-title); overflow-wrap: anywhere;
+}
+.th-dispatch-modal .th-dlg-num { flex: 0 0 auto; font-size: 12px; font-weight: 600; color: var(--text-ghost); font-variant-numeric: tabular-nums; }
+.th-dispatch-modal .th-dlg-x {
+  flex: 0 0 auto; margin-left: auto; width: 28px; height: 28px; padding: 0;
+  border: 0; border-radius: 8px; background: transparent; color: var(--text-ghost);
+  font-family: inherit; font-size: 14px; line-height: 1; cursor: pointer;
+}
+.th-dispatch-modal .th-dlg-x:hover { background: var(--bg-hover); color: var(--text-title); }
+.th-dispatch-modal .th-dlg-body { display: flex; flex-direction: column; gap: 14px; padding: 0 16px 18px; overflow: auto; }
+.th-dispatch-modal .th-field { display: flex; flex-direction: column; gap: 7px; }
+.th-dispatch-modal .th-field-label { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-soft); }
+.th-dispatch-modal .th-field-none { font-size: 12px; color: var(--text-ghost); }
+.th-dispatch-modal .th-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.th-dispatch-modal .th-opt {
+  display: inline-flex; align-items: center; gap: 7px; box-sizing: border-box;
+  height: 34px; padding: 0 12px 0 10px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--bg-panel); color: var(--text-soft);
+  font-family: inherit; font-size: 12.5px; font-weight: 600; line-height: 1; cursor: pointer;
+  transition: border-color .12s, background .12s, color .12s;
+}
+.th-dispatch-modal .th-opt:hover { border-color: var(--btn-soft-hover-bd); color: var(--text-title); }
+.th-dispatch-modal .th-opt:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.th-dispatch-modal .th-opt-dot {
+  width: 7px; height: 7px; border-radius: 50%; box-sizing: border-box;
+  border: 1.5px solid var(--text-ghost); transition: background .12s, border-color .12s, box-shadow .12s;
+}
+.th-dispatch-modal .th-opt.is-on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent); color: var(--text-title); }
+.th-dispatch-modal .th-opt.is-on .th-opt-dot { border-color: var(--accent); background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.th-dispatch-modal .th-dlg-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border-soft); background: var(--bg-elev); }
+.th-dispatch-modal .th-dlg-foot .th-btn { height: 34px; padding: 0 16px; font-size: 12.5px; border-radius: 9px; }
+@media (max-width: 700px) {
+  .th-dispatch-modal { place-items: end stretch; padding: 0; }
+  .th-dispatch-modal .th-dlg {
+    width: 100%; max-width: none; max-height: 88vh;
+    border-radius: 18px 18px 0 0; border-bottom: 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    animation: thSheetUp .22s cubic-bezier(.2, .8, .2, 1);
+  }
+  .th-dispatch-modal .th-dlg-foot .th-btn { flex: 1 1 0; height: 40px; font-size: 13px; }
+  .th-dispatch-modal .th-opt { height: 36px; }
+}
+@keyframes thSheetUp { from { transform: translateY(26px); opacity: .65; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .th-dispatch-modal .th-dlg { animation: none; }
+}
+@media (max-width: 700px) {
+  /* 手机上左列表与右详情是互斥单栏；桌面双栏规则会在这里兜底覆盖 */
+  #tmux-panel .th-split { grid-template-columns: minmax(0, 1fr); }
+  #tmux-panel .th-col-list, #tmux-panel .th-col-detail { min-width: 0; }
+}
+
+#tmux-panel .th-toolbar { display: flex; justify-content: flex-end; margin-bottom: 4px; }
+#tmux-panel .th-toolbar .th-btn { color: var(--text-ghost); }
+#tmux-panel .th-toolbar .th-btn:hover { color: var(--text-title); }
+
+/* ---- 任务调度与终端重构增强 ---- */
+#tmux-panel .th-tab-badge {
+  display: inline-block; font-size: 10px; font-weight: 700;
+  padding: 1px 6px; border-radius: 999px; margin-left: 5px;
+  background: var(--bg-hover); color: var(--text-soft); vertical-align: middle;
+}
+#tmux-panel .page-subnav-btn.active .th-tab-badge {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text-title);
+}
+
+/* 顶部快速筛选条 */
+#tmux-panel .th-filter-bar {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 12px;
+  overflow-x: auto; padding-bottom: 2px; scrollbar-width: none;
+}
+#tmux-panel .th-filter-bar::-webkit-scrollbar { display: none; }
+#tmux-panel .th-filter-chip {
+  display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px;
+  border-radius: 8px; font-size: 11.5px; font-weight: 600; cursor: pointer;
+  background: var(--bg-panel); border: 1px solid var(--border-soft); color: var(--text-soft);
+  white-space: nowrap; transition: all .14s ease;
+}
+#tmux-panel .th-filter-chip:hover { border-color: var(--border); color: var(--text-title); }
+#tmux-panel .th-filter-chip.active {
+  background: var(--bg-elev); border-color: var(--accent); color: var(--text-title);
+  box-shadow: 0 1px 3px rgba(0,0,0,.15);
+}
+#tmux-panel .th-filter-count {
+  font-size: 10px; opacity: .75; font-variant-numeric: tabular-nums;
+}
+
+/* 精简瘦身卡片 */
+#tmux-panel .th-row {
+  position: relative; padding: 10px 12px; gap: 4px; border-radius: 10px;
+}
+#tmux-panel .th-row .th-title {
+  font-size: 13px; font-weight: 620; line-height: 1.35; color: var(--text-title);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#tmux-panel .th-row .th-excerpt {
+  font-size: 11px; line-height: 1.4; color: var(--text-soft);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px;
+}
+#tmux-panel .th-row-actions { margin-top: 5px; }
+
+/* 运行中小微动效 */
+.th-led-running, .th-led-starting {
+  animation: thPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+@keyframes thPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .45; transform: scale(1.18); }
+}
+
+/* 现代化紧凑阶段指示流水线 */
+#tmux-panel .th-stepper {
+  display: flex; align-items: center; gap: 6px;
+  margin: 10px 0 16px; padding: 0;
+  overflow-x: auto; scrollbar-width: none;
+}
+#tmux-panel .th-stepper::-webkit-scrollbar { display: none; }
+#tmux-panel .th-step-item {
+  flex: 1 1 0; min-width: 80px; display: flex; align-items: center; gap: 6px;
+  padding: 6px 10px; border-radius: 8px; background: var(--bg-elev);
+  border: 1px solid var(--border-soft); transition: all .16s ease;
+}
+#tmux-panel .th-step-dot {
+  width: 18px; height: 18px; border-radius: 50%; display: flex;
+  align-items: center; justify-content: center; font-size: 10px; font-weight: 700;
+  background: var(--bg-panel); border: 1px solid var(--border);
+  color: var(--text-ghost); flex-shrink: 0;
+}
+#tmux-panel .th-step-item.is-done {
+  border-color: color-mix(in srgb, var(--c-ok, #58b368) 35%, transparent);
+  background: color-mix(in srgb, var(--c-ok, #58b368) 8%, var(--bg-elev));
+}
+#tmux-panel .th-step-item.is-done .th-step-dot {
+  background: var(--c-ok, #58b368); border-color: var(--c-ok, #58b368); color: #fff;
+}
+#tmux-panel .th-step-item.is-current {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-elev));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+#tmux-panel .th-step-item.is-current .th-step-dot {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+  animation: thPulse 2s infinite;
+}
+#tmux-panel .th-step-label {
+  font-size: 11px; font-weight: 600; color: var(--text-soft);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#tmux-panel .th-step-item.is-current .th-step-label { color: var(--text-title); font-weight: 700; }
+
+/* 智能体当下一句话状态卡片 */
+#tmux-panel .th-status-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 14px; border-radius: 10px; margin-bottom: 14px;
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+}
+#tmux-panel .th-status-banner.is-warn {
+  border-left-color: var(--c-warn, #d98b3a);
+  background: color-mix(in srgb, var(--c-warn, #d98b3a) 8%, var(--bg-elev));
+}
+#tmux-panel .th-status-msg {
+  display: flex; align-items: center; gap: 8px; font-size: 12.5px;
+  color: var(--text-title); line-height: 1.4;
+}
+#tmux-panel .th-status-meta {
+  font-size: 11px; color: var(--text-soft); font-variant-numeric: tabular-nums; flex-shrink: 0;
+}
+
+/* 待派发专属：内置快速启动卡片 */
+#tmux-panel .th-quick-dispatch {
+  display: flex; flex-direction: column; gap: 12px; padding: 14px 16px;
+  border-radius: 12px; background: var(--bg-elev); border: 1px solid var(--border);
+  margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0, 0, 0, .08);
+}
+#tmux-panel .th-qd-head {
+  display: flex; align-items: center; justify-content: space-between;
+}
+#tmux-panel .th-qd-title {
+  font-size: 12.5px; font-weight: 700; color: var(--text-title); letter-spacing: -.01em;
+}
+#tmux-panel .th-qd-hint {
+  font-size: 11px; color: var(--text-soft);
+}
+#tmux-panel .th-qd-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+#tmux-panel .th-qd-label {
+  font-size: 11px; font-weight: 650; color: var(--text-soft); min-width: 44px;
+}
+#tmux-panel .th-qd-opts {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap; flex: 1;
+}
+#tmux-panel .th-qd-opt {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px;
+  border-radius: 8px; border: 1px solid var(--border); background: var(--bg-panel);
+  color: var(--text-soft); font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: all .12s ease;
+}
+#tmux-panel .th-qd-opt:hover { border-color: var(--border-hover); color: var(--text-title); }
+#tmux-panel .th-qd-opt.is-on {
+  border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--bg-panel));
+  color: var(--text-title);
+}
+#tmux-panel .th-qd-foot {
+  display: flex; justify-content: flex-end; align-items: center; gap: 10px;
+  padding-top: 8px; border-top: 1px solid var(--border-soft); margin-top: 2px;
+}
+#tmux-panel .th-qd-launch {
+  height: 34px; padding: 0 18px; border-radius: 999px; font-size: 12.5px; font-weight: 700;
+}
+
+/* 内联人机协同指令回复卡片 */
+#tmux-panel .th-inline-reply {
+  display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 10px;
+  background: var(--bg-elev); border: 1px solid var(--border); margin-bottom: 14px;
+}
+#tmux-panel .th-inline-reply-head {
+  display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; font-weight: 650;
+  color: var(--text-title);
+}
+#tmux-panel .th-inline-reply-box {
+  display: flex; gap: 8px; align-items: center;
+}
+#tmux-panel .th-reply-input {
+  flex: 1; height: 34px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--bg-panel); color: var(--text); padding: 0 10px; font-size: 12.5px;
+  outline: none; transition: border-color .14s;
+}
+#tmux-panel .th-reply-input:focus { border-color: var(--accent); }
+
+/* 详情页多 Tab 控制 */
+#tmux-panel .th-detail-tabs {
+  display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--border-soft);
+  margin-bottom: 14px; padding-bottom: 8px;
+}
+#tmux-panel .th-dtab-btn {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px;
+  border-radius: 6px; font-size: 11.5px; font-weight: 600; cursor: pointer;
+  background: transparent; border: 1px solid transparent; color: var(--text-soft);
+  transition: all .12s ease;
+}
+#tmux-panel .th-dtab-btn:hover { color: var(--text-title); background: var(--bg-hover); }
+#tmux-panel .th-dtab-btn.active {
+  background: var(--bg-elev); border-color: var(--border-soft); color: var(--text-title);
+}
+
+/* 终端控制台容器（融入系统面板风格） */
+#tmux-panel .th-term-window {
+  display: flex; flex-direction: column; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--bg-panel); overflow: hidden;
+}
+#tmux-panel .th-term-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; background: var(--bg-elev); border-bottom: 1px solid var(--border-soft);
+  font-size: 11.5px; color: var(--text-soft);
+}
+#tmux-panel .th-term-actions {
+  display: flex; align-items: center; gap: 6px;
+}
+#tmux-panel .th-term-btn {
+  display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px;
+  border-radius: 5px; font-size: 11px; font-weight: 600; cursor: pointer;
+  background: var(--bg-panel); border: 1px solid var(--border); color: var(--text-soft);
+  transition: all .12s;
+}
+#tmux-panel .th-term-btn:hover { border-color: var(--border-hover); color: var(--text-title); }
+#tmux-panel .th-term-btn.is-active { background: var(--accent); border-color: var(--accent); color: #fff; }
+#tmux-panel .th-term-content {
+  margin: 0; padding: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px; line-height: 1.5; color: var(--text); background: transparent;
+  max-height: 48vh; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+}
+
+/* 新建任务专属模态框 */
+.th-new-modal .th-dlg {
+  width: min(560px, 100%);
+}
+.th-new-modal .th-tags-row {
+  display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px;
+}
+.th-new-modal .th-tag-btn {
+  display: inline-flex; align-items: center; height: 24px; padding: 0 8px;
+  border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer;
+  background: var(--bg-panel); border: 1px solid var(--border-soft); color: var(--text-soft);
+  transition: all .12s;
+}
+.th-new-modal .th-tag-btn:hover { border-color: var(--accent); color: var(--text-title); }
+.th-new-modal .th-input-text {
+  width: 100%; box-sizing: border-box; height: 38px; padding: 0 12px;
+  border-radius: 9px; border: 1px solid var(--border); background: var(--bg-panel);
+  color: var(--text); font-size: 13.5px; font-weight: 600; outline: none;
+}
+.th-new-modal .th-input-text:focus { border-color: var(--accent); }
+.th-new-modal .th-textarea {
+  width: 100%; box-sizing: border-box; min-height: 110px; padding: 10px 12px;
+  border-radius: 9px; border: 1px solid var(--border); background: var(--bg-panel);
+  color: var(--text); font-size: 13px; line-height: 1.6; outline: none; resize: vertical;
+  font-family: inherit;
+}
+.th-new-modal .th-textarea:focus { border-color: var(--accent); }
+.th-new-modal .th-agent-card {
+  flex: 1 1 120px; display: flex; flex-direction: column; gap: 3px;
+  padding: 8px 10px; border-radius: 9px; border: 1px solid var(--border);
+  background: var(--bg-panel); cursor: pointer; transition: all .12s;
+}
+.th-new-modal .th-agent-card:hover { border-color: var(--border-hover); }
+.th-new-modal .th-agent-card.is-on {
+  border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
+}
+.th-new-modal .th-agent-card-title {
+  display: flex; align-items: center; justify-content: space-between; font-size: 12.5px; font-weight: 700; color: var(--text-title);
+}
+.th-new-modal .th-agent-card-desc {
+  font-size: 11px; color: var(--text-soft); line-height: 1.35;
+}
+
