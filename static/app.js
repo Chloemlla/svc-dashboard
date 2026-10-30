@@ -2514,6 +2514,8 @@ function getRepoTheme(repo) {
 async function renderActivityPage() {
   const ap = $("activity-page");
   if (ap) ap.hidden = false;
+  thInitTabs();
+  if (TH.tab !== "events") { thSetTab(TH.tab); return; }
   const container = $("activity-body");
   if (!container) return;
   const d = await fetchGoalsData();
@@ -8855,3 +8857,225 @@ $("aiclean-modal")?.addEventListener("click", e => { if (e.target.id === "aiclea
 $("aiclean-modal-rerun")?.addEventListener("click", aiRerun);
 aiStatusChip();
 hydrateFragments();
+
+// ================= TaskHub：任务（Issue）/ 执行日志 =================
+// 数据来自本机 TaskHub 引擎(经 svc-dashboard 后端 /api/th/* 转发)；界面完全复用
+// 仪表盘的样式与组件，任务只是"活动"里的一个小 tab。
+const TH = { tab: "events", mode: "open", q: "", issues: null, runs: null,
+             hosts: null, health: null, logId: null, timer: null, sheet: null };
+
+async function thGet(path) {
+  try {
+    const r = await fetch(path, { cache: "no-store" });
+    return await r.json();
+  } catch (e) {
+    return { ok: false, msg: String(e) };
+  }
+}
+
+function thAgo(iso) {
+  if (!iso) return "—";
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (!isFinite(s)) return "—";
+  if (s < 60) return "刚刚";
+  if (s < 3600) return `${Math.floor(s / 60)} 分钟前`;
+  if (s < 86400) return `${Math.floor(s / 3600)} 小时前`;
+  return `${Math.floor(s / 86400)} 天前`;
+}
+
+function thStateLabel(state) {
+  const map = { queued: "排队", starting: "启动中", running: "运行中", waiting_user: "等待你",
+                succeeded: "完成", failed: "失败", cancelled: "已停止", lost: "已丢失" };
+  return map[state] || state || "—";
+}
+
+function thHostChip(run) {
+  if (!run) return "";
+  const hosts = (TH.hosts && TH.hosts.hosts) || [];
+  const h = hosts.find(x => x.id === (run.host || "")) || {};
+  const on = h.online !== false;
+  return `<span class="chip th-chip th-host ${on ? "th-on" : "th-off"}" title="${on ? escHtml(t("th_online")) : escHtml(t("th_offline"))}">
+    ${icon("host", 12)}${escHtml(h.label || run.host || t("th_local"))}</span>`;
+}
+
+function thStateChip(run) {
+  if (!run) return "";
+  return `<span class="chip th-chip th-st th-${escHtml(run.state || "")}">${escHtml(thStateLabel(run.state))}</span>`;
+}
+
+function thSetTab(tab) {
+  TH.tab = tab;
+  document.querySelectorAll("#th-subtabs .chip").forEach(c => c.classList.toggle("active", c.dataset.th === tab));
+  const show = { events: "activity-body", issues: "th-tasks", runs: "th-runs", log: "th-log" }[tab] || "activity-body";
+  ["activity-body", "th-tasks", "th-runs", "th-log"].forEach(id => {
+    const el = $(id); if (el) el.hidden = id !== show;
+  });
+  const af = $("act-filters"); if (af) af.hidden = tab !== "events";
+  if (tab === "issues" || tab === "runs") thEnsureBase().then(() => {
+    if (TH.tab === "issues") thRenderTasks(); else if (TH.tab === "runs") thRenderRuns();
+  });
+  if (tab === "issues") thRenderTasks();
+  else if (tab === "runs") thRenderRuns();
+  else if (tab === "events" && typeof renderActivityPage === "function") renderActivityPage();
+}
+
+function thEnsureBase() {
+  return Promise.all([
+    TH.hosts ? Promise.resolve(TH.hosts) : thGet("/api/th/hosts").then(d => (TH.hosts = d)),
+    TH.health ? Promise.resolve(TH.health) : thGet("/api/th/health").then(d => (TH.health = d)),
+  ]);
+}
+
+async function thRenderTasks() {
+  const box = $("th-tasks"); if (!box) return;
+  box.innerHTML = `<div class="gempty">${escHtml(t("th_loading"))}</div>`;
+  const d = await thGet(`/api/th/issues?mode=${encodeURIComponent(TH.mode)}&q=${encodeURIComponent(TH.q)}`);
+  TH.issues = d;
+  if (d.ok === false) { box.innerHTML = `<div class="gempty t-red">${escHtml(d.msg || "无法读取任务")}</div>`; return; }
+  const items = d.issues || [];
+  const chips = [["open", t("th_open")], ["running", t("th_running")], ["closed", t("th_closed")], ["all", t("th_all")]]
+    .map(([k, label]) => `<span class="chip ${TH.mode === k ? "active" : ""}" data-thmode="${k}" role="button" tabindex="0">${escHtml(label)}</span>`).join("");
+  const rows = items.length ? items.map(thCard).join("") : `<div class="gempty">${escHtml(t("th_empty"))}</div>`;
+  box.innerHTML = `
+    <div class="filters th-filters">${chips}
+      <input class="th-search" id="th-search" placeholder="搜索任务" value="${escHtml(TH.q)}" />
+    </div>
+    <div class="th-list">${rows}</div>`;
+  box.querySelectorAll("[data-thmode]").forEach(el => el.addEventListener("click", () => { TH.mode = el.dataset.thmode; thRenderTasks(); }));
+  const s = $("th-search");
+  if (s) {
+    let deb;
+    s.addEventListener("input", () => { clearTimeout(deb); deb = setTimeout(() => { TH.q = s.value.trim(); thRenderTasks(); }, 300); });
+  }
+  box.querySelectorAll("[data-th-act]").forEach(el => el.addEventListener("click", ev => {
+    ev.stopPropagation();
+    const [kind, num] = [el.dataset.thAct, el.dataset.num];
+    if (kind === "dispatch") thDispatchSheet(num);
+    if (kind === "restore") thSetState(num, "open");
+    if (kind === "close") thSetState(num, "closed");
+  }));
+  box.querySelectorAll("[data-th-log]").forEach(el => el.addEventListener("click", ev => {
+    ev.stopPropagation(); thOpenLog(el.dataset.thLog);
+  }));
+}
+
+function thCard(it) {
+  const run = it.run || null;
+  const excerpt = it.excerpt ? `<div class="th-excerpt">${escHtml(it.excerpt)}</div>` : "";
+  const acts = run
+    ? `<span class="chip th-chip" data-th-log="${escHtml(run.id)}" role="button" tabindex="0">${icon("activity", 12)}${escHtml(t("th_tab_logs"))}</span>`
+    : "";
+  const restore = it.state === "closed"
+    ? `<span class="chip th-chip" data-th-act="restore" data-num="${it.number}" role="button" tabindex="0">${escHtml(t("th_restore"))}</span>`
+    : `<span class="chip th-chip primary" data-th-act="dispatch" data-num="${it.number}" role="button" tabindex="0">${escHtml(t("th_dispatch"))}</span>`;
+  return `<div class="th-card">
+    <div class="th-card-main">
+      <div class="th-title">${escHtml(it.title || "")}</div>
+      ${excerpt}
+      <div class="th-meta"><span>#${it.number}</span><span>${escHtml(thAgo(it.updatedAt))}</span></div>
+    </div>
+    <div class="th-card-side">${thStateChip(run)}${thHostChip(run)}${acts}${restore}</div>
+  </div>`;
+}
+
+function thDispatchSheet(number) {
+  const box = $("th-tasks"); if (!box) return;
+  document.querySelectorAll(".th-sheet").forEach(el => el.remove());
+  const agents = (TH.health && TH.health.agents) || [];
+  const defAgent = (TH.health && TH.health.default_agent) || agents[0] || "pi";
+  const hosts = ((TH.hosts && TH.hosts.hosts) || []).filter(h => h.online !== false);
+  const defHost = (TH.hosts && TH.hosts.default) || (hosts[0] || {}).id || "";
+  const labels = (TH.health && TH.health.agent_labels) || {};
+  const agentChips = agents.map(a => `<span class="chip ${a === defAgent ? "active" : ""}" data-ag="${escHtml(a)}" role="button" tabindex="0">${escHtml(labels[a] || a)}</span>`).join("");
+  const hostChips = hosts.map(h => `<span class="chip ${h.id === defHost ? "active" : ""}" data-hs="${escHtml(h.id)}" role="button" tabindex="0">${escHtml(h.label || h.id)}</span>`).join("");
+  const sheet = document.createElement("div");
+  sheet.className = "th-sheet";
+  sheet.innerHTML = `
+    <div class="th-sheet-title">#${escHtml(String(number))} · ${escHtml(t("th_dispatch"))}</div>
+    <div class="th-sheet-row"><span class="th-sheet-label">${escHtml(t("th_agent"))}</span>${agentChips}</div>
+    <div class="th-sheet-row"><span class="th-sheet-label">${escHtml(t("th_host"))}</span>${hostChips}</div>
+    <div class="th-sheet-actions">
+      <span class="chip" data-th-cancel="1" role="button" tabindex="0">取消</span>
+      <span class="chip primary" data-th-go="1" role="button" tabindex="0">${escHtml(t("th_dispatch"))}</span>
+    </div>`;
+  box.prepend(sheet);
+  let agent = defAgent, host = defHost;
+  sheet.querySelectorAll("[data-ag]").forEach(el => el.addEventListener("click", () => {
+    agent = el.dataset.ag; sheet.querySelectorAll("[data-ag]").forEach(x => x.classList.toggle("active", x === el));
+  }));
+  sheet.querySelectorAll("[data-hs]").forEach(el => el.addEventListener("click", () => {
+    host = el.dataset.hs; sheet.querySelectorAll("[data-hs]").forEach(x => x.classList.toggle("active", x === el));
+  }));
+  sheet.querySelector("[data-th-cancel]").addEventListener("click", () => sheet.remove());
+  sheet.querySelector("[data-th-go]").addEventListener("click", async () => {
+    sheet.querySelector("[data-th-go]").textContent = "…";
+    const r = await apiPost("/api/th/dispatch", { number: Number(number), agent, host });
+    const d = await r.json().catch(() => ({ ok: false, msg: "bad json" }));
+    sheet.remove();
+    if (d.ok) { toast?.(t("th_started")); TH.health = null; thRenderTasks(); }
+    else alert(d.msg || "派发失败");
+  });
+  sheet.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+async function thSetState(number, state) {
+  const r = await apiPost("/api/th/state", { number: Number(number), state });
+  const d = await r.json().catch(() => ({ ok: false, msg: "bad json" }));
+  if (d.ok) thRenderTasks();
+  else alert(d.msg || "操作失败");
+}
+
+async function thRenderRuns() {
+  const box = $("th-runs"); if (!box) return;
+  box.innerHTML = `<div class="gempty">${escHtml(t("th_loading"))}</div>`;
+  const d = await thGet("/api/th/runs?limit=40");
+  TH.runs = d;
+  if (d.ok === false) { box.innerHTML = `<div class="gempty t-red">${escHtml(d.msg || "无法读取执行记录")}</div>`; return; }
+  const runs = d.runs || [];
+  if (!runs.length) { box.innerHTML = `<div class="gempty">${escHtml(t("th_no_runs"))}</div>`; return; }
+  box.innerHTML = `<div class="th-list">` + runs.map(r => `
+    <div class="th-card th-run" data-th-log="${escHtml(r.id)}" role="button" tabindex="0">
+      <div class="th-card-main">
+        <div class="th-title">#${r.issue_number} ${escHtml(r.issue_title || "")}</div>
+        <div class="th-meta"><span>${escHtml(r.agent || "")}</span><span>${escHtml(r.stage || "—")}</span>
+          <span>${escHtml((r.message || "").slice(0, 80))}</span></div>
+      </div>
+      <div class="th-card-side">${thStateChip(r)}${thHostChip(r)}</div>
+    </div>`).join("") + `</div>`;
+  box.querySelectorAll("[data-th-log]").forEach(el => el.addEventListener("click", () => thOpenLog(el.dataset.thLog)));
+}
+
+async function thOpenLog(id) {
+  TH.logId = id;
+  const box = $("th-log"); if (!box) return;
+  thSetTab("log");
+  box.innerHTML = `<div class="th-log-head"><span class="th-title">${escHtml(id)}</span>
+    <span class="chip" data-th-back="1" role="button" tabindex="0">返回</span>
+    <span class="chip" data-th-cancel-run="${escHtml(id)}" role="button" tabindex="0">${escHtml(t("th_cancel"))}</span></div>
+    <pre class="th-log" id="th-log-pre">${escHtml(t("th_loading"))}</pre>`;
+  const pull = async () => {
+    if (TH.logId !== id) return;
+    const d = await thGet(`/api/th/log?id=${encodeURIComponent(id)}&lines=400`);
+    const pre = $("th-log-pre");
+    if (!pre) return;
+    if (d.ok === false) { pre.textContent = d.msg || t("th_no_log"); return; }
+    const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 24;
+    pre.textContent = d.log || t("th_no_log");
+    if (atBottom) pre.scrollTop = pre.scrollHeight;
+  };
+  box.querySelector("[data-th-back]").addEventListener("click", () => { TH.logId = null; thSetTab("runs"); });
+  box.querySelector("[data-th-cancel-run]").addEventListener("click", async () => {
+    const r = await apiPost("/api/th/cancel", { id });
+    const d = await r.json().catch(() => ({ ok: false }));
+    if (d.ok) pull();
+  });
+  await pull();
+  if (TH.timer) clearInterval(TH.timer);
+  TH.timer = setInterval(() => { if (TH.tab !== "log") { clearInterval(TH.timer); return; } pull(); }, 2500);
+}
+
+function thInitTabs() {
+  const bar = $("th-subtabs"); if (!bar || bar.dataset.wired) return;
+  bar.dataset.wired = "1";
+  bar.querySelectorAll("[data-th]").forEach(el => el.addEventListener("click", () => thSetTab(el.dataset.th)));
+}

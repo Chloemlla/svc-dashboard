@@ -7546,3 +7546,53 @@ body.is-static .mp-pv-status-pill.mono span:not(.mp-pv-status-dot) {
 
 
 
+
+/* ===== TaskHub: 活动页内的 任务 / 日志 ===== */
+.th-subtabs { margin-bottom: 10px; }
+.th-filters { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.th-search { flex: 1 1 160px; min-width: 120px; background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: 999px; padding: 6px 12px; color: var(--text); font-size: 12.5px; outline: none; }
+.th-search:focus { border-color: var(--c-ok); }
+.th-list { display: flex; flex-direction: column; gap: 8px; }
+.th-card { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; padding: 11px 13px; }
+.th-card.th-run { cursor: pointer; }
+.th-card:hover { background: var(--bg-hover); }
+.th-card-main { min-width: 0; flex: 1 1 auto; }
+.th-title { font-weight: 650; font-size: 13.5px; color: var(--text-title); word-break: break-word; }
+.th-excerpt { margin-top: 4px; color: var(--text-soft); font-size: 11.5px; line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.th-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 5px; color: var(--text-dim, var(--text-soft));
+  font-size: 11px; }
+.th-card-side { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; flex: 0 0 auto; }
+.th-chip { font-size: 10.5px; display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; }
+.th-chip.primary { border-color: color-mix(in srgb, var(--c-ok) 45%, var(--border)); color: var(--c-ok); }
+.th-on { color: var(--c-ok); }
+.th-off { color: var(--c-warn); }
+.th-st.th-running, .th-st.th-starting { color: var(--c-ok); }
+.th-st.th-waiting_user, .th-st.th-queued { color: var(--c-warn); }
+.th-st.th-failed, .th-st.th-lost { color: var(--c-bad, #e5534b); }
+.th-sheet { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; margin-bottom: 10px; }
+.th-sheet-title { font-weight: 650; font-size: 13px; margin-bottom: 8px; color: var(--text-title); }
+.th-sheet-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 7px; }
+.th-sheet-label { color: var(--text-soft); font-size: 11.5px; min-width: 52px; }
+.th-sheet-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.th-log-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.th-log { background: var(--bg-deep); border: 1px solid var(--border); border-radius: 10px; padding: 12px;
+  max-height: 58vh; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  color: var(--text-soft); font: 11.5px/1.55 var(--font-mono, ui-monospace, monospace); margin: 0; }
+@media (max-width: 640px) {
+  .th-card { flex-direction: column; gap: 7px; }
+  .th-card-side { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; }
+  .th-log { max-height: 52vh; }
+}
+
+/* TaskHub 卡片可读性 */
+.th-card { padding: 12px 14px; gap: 14px; }
+.th-card-side { min-width: 96px; }
+.th-title { font-size: 14px; line-height: 1.35; }
+.th-excerpt { color: var(--text); opacity: .82; font-size: 12px; line-height: 1.55; margin-top: 5px; -webkit-line-clamp: 3; }
+.th-meta { color: var(--text-soft); opacity: .95; margin-top: 6px; font-size: 11px; }
+.th-chip.primary { background: color-mix(in srgb, var(--c-ok) 16%, transparent); font-weight: 650; }
+.th-list { gap: 10px; }
+@media (max-width: 640px) { .th-card-side { min-width: 0; } }

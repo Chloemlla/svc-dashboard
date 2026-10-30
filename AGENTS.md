@@ -203,3 +203,19 @@ systemctl --user disable --now svc-dashboard-static-publish.timer
 
 脚本要求当前用户已有 `origin` 的 Git 推送凭据；自动任务不会调用 sudo，也不会修改主服务
 `svc-dashboard.service`。如果推送失败，hash 不会写入，下一次 timer 会自动重试。
+
+## TaskHub 集成（活动页 → 任务 / 日志）
+
+「活动」页顶部多了三个子 tab：**记录 / 任务 / 日志**。任务不是另一套系统：它是本机
+TaskHub 引擎（`taskhub.service`，只监听 `127.0.0.1:8096`）的能力，经 svc-dashboard 后端
+转发后在仪表盘里呈现，界面完全沿用仪表盘样式。
+
+- 后端：`svcdash/taskhub.py` 只做 HTTP 转发与整形（`/api/th/health|hosts|issues|runs|run|log`，
+  POST `/api/th/dispatch|state|cancel|resume`），所有失败降级为 `{ok:false,msg}`，不影响仪表盘其它页。
+- 前端：`static/app.js` 里的 `TH`/`thRender*` 一组函数；任务卡片显示标题 + 三行摘要 +
+  `#编号 · 时间` + 状态/机器 chip，右侧「派发 / 恢复 / 日志」。
+- 派发面板只列**非 hidden** 的 agent（pi / Hermes 分配 / omp）和**在线**机器，默认 `pi` + 本机。
+- 代码仓库不需要选：引擎按 Issue 正文/标签判断，判断不出直接拒绝（不会把 agent 丢进 dotfiles）。
+- 任务数据仍由引擎持有（`~/.local/state/taskhub/taskhub.db`）；svc-dashboard 不写任务库。
+- 修改后验证：`curl -s localhost/api/th/health`，再在浏览器打开 `/#cat=activity` → 任务，
+  确认 26 条列表、日志面板、派发面板三处都可用（手机 390 宽无横向溢出）。
