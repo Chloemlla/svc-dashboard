@@ -138,6 +138,8 @@ def dispatch(number, agent=None, host=None):
     d = _req("/api/runs", method="POST", body=body, timeout=90)
     if d.get("id"):
         return {"ok": True, "id": d["id"]}
+    if d.get("needs_repo"):
+        return {"ok": True, "needs_repo": True, "question": d.get("question") or ""}
     return {"ok": False, "msg": d.get("msg") or "派发失败"}
 
 
@@ -164,6 +166,9 @@ def create(title, body, agent="pi", host=""):
     if host:
         run_body["host"] = host
     r = _req("/api/runs", method="POST", body=run_body, timeout=120)
+    if r.get("needs_repo"):
+        return {"ok": True, "number": number, "url": d.get("url"), "needs_repo": True,
+                "question": r.get("question") or ""}
     if r.get("id"):
         return {"ok": True, "number": number, "url": d.get("url"), "id": r["id"],
                 "needs_repo": bool(r.get("needs_repo")), "question": r.get("question") or ""}
