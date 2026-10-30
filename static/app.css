@@ -7851,3 +7851,7 @@ body.is-static .mp-pv-status-pill.mono span:not(.mp-pv-status-dot) {
 .th-split { grid-template-columns: minmax(300px, 360px) minmax(0, 1fr); }
 .th-bar-actions .chip.primary { background: var(--chip-on-bg, #f2f2f2); color: var(--chip-on-tx, #111); border-color: transparent; font-weight: 700; }
 .th-bar-actions .chip.primary { background: var(--text-title); color: var(--bg); border-color: var(--text-title); }
+@media (max-width: 700px) {
+  #tmux-view-tasks, .th-col-detail, #th-detail { padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
+  .th-detail-bar { top: 0; }
+}
