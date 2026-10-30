@@ -9031,14 +9031,20 @@ function thTaskCard(it, kind) {
   const progress = kind === "running"
     ? `<div class="th-progress"><i style="width:${pct}%"></i></div>` : "";
   const selected = TH.taskView === it.number ? " selected" : "";
+  const dotState = run ? (run.state || "") : (it.state === "closed" ? "done" : "pending");
+  const metaParts = [
+    `<b>#${it.number}</b>`,
+    run ? escHtml(thHostName(run)) : "",
+    run && run.stage ? escHtml(run.stage) : "",
+  ].filter(Boolean).join('<i class="th-dot"></i>');
   return `<div class="th-card th-row${selected}" data-th-open="${it.number}" role="button" tabindex="0">
     <div class="th-row-head">
-      <span class="th-st th-${run ? escHtml(run.state || "") : "pending"}">${escHtml(state)}</span>
+      <span class="th-state"><i class="th-led th-led-${escHtml(dotState)}"></i>${escHtml(state)}</span>
+      <span class="th-row-id">${metaParts}</span>
       <span class="th-row-time">${escHtml(thAgo(it.updatedAt))}</span>
     </div>
     <div class="th-title">${escHtml(it.title || "")}</div>
     ${excerpt}
-    ${meta}
     ${progress}
     ${kind === "running" ? `<div class="th-row-actions">${actions}</div>` : ""}
   </div>`;
@@ -9086,8 +9092,13 @@ async function thOpenSession(name) {
     pre.scrollTop = pre.scrollHeight;
   };
   pull();
-  if (TH.timer) clearInterval(TH.timer);
-  TH.timer = setInterval(() => { const pre = $("th-session-pre"); if (!pre) { clearInterval(TH.timer); return; } pull(); }, 2500);
+  if (TH.timer) { clearInterval(TH.timer); TH.timer = null; }
+  TH.timer = setInterval(() => {
+    const pre = $("th-session-pre");
+    if (!pre) { clearInterval(TH.timer); TH.timer = null; return; }
+    if (TH.busy) return;
+    TH.busy = true; pull().finally(() => { TH.busy = false; });
+  }, 3000);
 }
 
 /* ---------------- 任务详情：状态 + 阶段 + 事件 + 原始日志 ---------------- */
@@ -9095,6 +9106,7 @@ async function thOpenTask(number, keepScroll) {
   const box = $("th-tasks"), det = $("th-detail");
   if (!box || !det) return;
   TH.taskView = number;
+  if (TH.timer) { clearInterval(TH.timer); TH.timer = null; }
   const wide = window.matchMedia("(min-width: 701px)").matches;
   box.hidden = !wide;            // 桌面：左列表常驻；手机：列表让位给详情
   det.hidden = false;
@@ -9144,7 +9156,7 @@ async function thOpenTask(number, keepScroll) {
     <div class="th-detail-body">
     ${thCardMeta([escHtml(d.repo), latest ? escHtml(thHostName(latest)) : "", latest && latest.branch ? `<code>${escHtml(latest.branch)}</code>` : ""])}
     ${latest ? `<div class="th-stages">${stages}</div>
-      <div class="th-progress ${["running", "waiting_user", "queued", "starting"].includes(latest.state) ? "" : "stopped"}"><i style="width:${thPercent(latest)}%"></i></div>
+      ${TH_ACTIVE.has(latest.state) ? `<div class="th-progress"><i style="width:${thPercent(latest)}%"></i></div>` : ""}
       <div class="th-now">${escHtml(latest.message || "—")}</div>` : ""}
     ${latest && latest.tmux_session ? `
       <div class="th-section-title">会话 · ${escHtml(latest.tmux_session)}</div>
@@ -9192,8 +9204,14 @@ async function thOpenTask(number, keepScroll) {
       pre.scrollTop = pre.scrollHeight;
     };
     pullPreview();
-    if (TH.timer) clearInterval(TH.timer);
-    TH.timer = setInterval(() => { const pre = $("th-task-preview"); if (!pre) { clearInterval(TH.timer); return; } pullPreview(); }, 3000);
+    if (TH.timer) { clearInterval(TH.timer); TH.timer = null; }
+    if (TH_ACTIVE.has(latest.state)) {
+      TH.timer = setInterval(() => {
+        const pre = $("th-task-preview");
+        if (!pre || TH.busy) { if (!pre) { clearInterval(TH.timer); TH.timer = null; } return; }
+        TH.busy = true; pullPreview().finally(() => { TH.busy = false; });
+      }, 4000);
+    }
   }
 }
 
@@ -9215,7 +9233,11 @@ function thShowLog(runId) {
   };
   pull();
   if (TH.timer) clearInterval(TH.timer);
-  TH.timer = setInterval(() => { if (TH.logId !== runId || !box || box.hidden) { clearInterval(TH.timer); return; } pull(); }, 2500);
+  TH.timer = setInterval(() => {
+    if (TH.logId !== runId || !box || box.hidden) { clearInterval(TH.timer); TH.timer = null; return; }
+    if (TH.busy) return;
+    TH.busy = true; pull().finally(() => { TH.busy = false; });
+  }, 3000);
 }
 
 function thDispatchSheet(number, after) {
