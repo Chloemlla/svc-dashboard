@@ -83,6 +83,30 @@ def issues(mode="open", q=""):
     return {"ok": True, "repo": d.get("repo"), "issues": items}
 
 
+def task(number):
+    """一个任务 = Issue + 它的全部 run + 最近 run 的事件流。"""
+    h = health()
+    if not h.get("ok"):
+        return h
+    repo = h.get("issue_repo")
+    if not repo:
+        return {"ok": False, "msg": "未配置 Issue 仓库"}
+    issue = _req(f"/api/issues/{repo}/{int(number)}", timeout=45)
+    if issue.get("ok") is False:
+        return issue
+    for r in issue.get("runs") or []:
+        r.pop("events", None)
+    runs = issue.get("runs") or []
+    latest = runs[0] if runs else None
+    events = []
+    if latest:
+        detail = _req(f"/api/runs/{latest['id']}", timeout=20)
+        events = detail.get("events") or []
+    return {"ok": True, "repo": repo, "issue": issue, "runs": runs,
+            "latest": latest, "events": events, "agents": h.get("agents"),
+            "default_agent": h.get("default_agent")}
+
+
 def runs(limit=40):
     d = _req(f"/api/runs?limit={int(limit)}", timeout=20)
     if d.get("ok") is False:
@@ -114,7 +138,42 @@ def dispatch(number, agent=None, host=None):
     d = _req("/api/runs", method="POST", body=body, timeout=90)
     if d.get("id"):
         return {"ok": True, "id": d["id"]}
+    if d.get("needs_repo"):
+        return {"ok": True, "needs_repo": True, "question": d.get("question") or ""}
     return {"ok": False, "msg": d.get("msg") or "派发失败"}
+
+
+def create(title, body, agent="pi", host=""):
+    """新建任务：在 issue 仓库里开 issue，然后立刻派发。
+
+    仓库判断不在这里做：TaskHub 解析不出来会先挂起并在 Telegram 里问，而不是让 UI 报错。
+    """
+    h = health()
+    if not h.get("ok"):
+        return h
+    repo = h.get("issue_repo")
+    if not repo:
+        return {"ok": False, "msg": "未配置 Issue 仓库"}
+    title = (title or "").strip()
+    if not title:
+        return {"ok": False, "msg": "标题不能为空"}
+    d = _req(f"/api/issues/{repo}", method="POST",
+             body={"title": title[:200], "body": (body or "").strip()}, timeout=90)
+    if not d.get("ok") or not d.get("number"):
+        return {"ok": False, "msg": d.get("msg") or "创建 Issue 失败"}
+    number = int(d["number"])
+    run_body = {"repo": repo, "issue_number": number, "agent": agent or "pi"}
+    if host:
+        run_body["host"] = host
+    r = _req("/api/runs", method="POST", body=run_body, timeout=120)
+    if r.get("needs_repo"):
+        return {"ok": True, "number": number, "url": d.get("url"), "needs_repo": True,
+                "question": r.get("question") or ""}
+    if r.get("id"):
+        return {"ok": True, "number": number, "url": d.get("url"), "id": r["id"],
+                "needs_repo": bool(r.get("needs_repo")), "question": r.get("question") or ""}
+    return {"ok": False, "number": number, "url": d.get("url"),
+            "msg": r.get("msg") or "Issue 已创建，但派发失败"}
 
 
 def set_state(number, state):

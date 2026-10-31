@@ -174,6 +174,43 @@ def _collect_static_snapshot(lang=DEFAULT_LANG):
     }
 
 
+def _collect_public_tasks():
+    """静态快照里的任务列表：只保留 issue 标题与摘要。
+
+    正文、分支、机器、执行日志、编号都不采集——公开页面上出现的就是全部内容，
+    不做"发布后模糊"（CSS blur 在开发者工具里一键就能去掉，不能当隐私边界）。
+    带 private / secret / no-publish 标签的 issue 直接跳过。
+    """
+    try:
+        from . import taskhub as th_mod
+        d = th_mod.issues(mode="open")
+        if d.get("ok") is False:
+            return {"items": [], "error": d.get("msg") or "taskhub unavailable"}
+        items = []
+        for it in (d.get("issues") or []):
+            labels = [str(l).lower() for l in (it.get("labels") or [])]
+            if any(l in {"private", "secret", "no-publish"} for l in labels):
+                continue
+            title = (it.get("title") or "").strip()
+            if not title:
+                continue
+            items.append({"title": title, "excerpt": (it.get("excerpt") or "").strip()})
+        return {"items": items[:40], "count": len(items)}
+    except Exception as exc:
+        return {"items": [], "error": str(exc)[:120]}
+
+
+def _public_tasks_payload(lang=DEFAULT_LANG):
+    data = _collect_public_tasks()
+    items = []
+    for it in data.get("items") or []:
+        items.append({
+            "title": sanitize_text(str(it.get("title") or ""))[:160],
+            "excerpt": sanitize_text(str(it.get("excerpt") or ""))[:220],
+        })
+    return {"items": items, "count": len(items), "error": data.get("error") or ""}
+
+
 def gather_static_payload(lang=DEFAULT_LANG, snapshot=None):
     """收集并脱敏全量监控与活动数据，生成独立静态 HTML 内容。
     对命令、内部私有 IP、家目录路径、Tmux 终端屏幕输出进行全方位隐私保护脱敏。
@@ -242,6 +279,10 @@ def gather_static_payload(lang=DEFAULT_LANG, snapshot=None):
         "goalsData": public_goals,
         "reposData": deep_sanitize(repos_data, mask_ips=True, mask_paths=True),
         "tasksData": sanitize_public_payload(tasks_data, lang),
+        # 任务标题/摘要按字段单独脱敏：只清洗密钥、家目录、内网 IP，
+        # 不套用通用 red("content")——那会把标题整条替换成"[内容已脱敏]"，
+        # 列表就没法看了。正文/分支/日志在采集阶段就没有进入快照。
+        "thTasks": _public_tasks_payload(lang),
         "tmuxData": sanitize_public_payload(clean_tmux, lang),
         # clean_runtimes 已由 sanitize_runtimes_for_public 处理；不要再次套用
         # 通用内容规则，否则 quota.bucket.label 会被误判为私密文本。

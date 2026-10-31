@@ -152,6 +152,10 @@ HTTP 层：HTTP/1.1 keep-alive + gzip + 静态 ETag/304（svcdash/handler.py）�
 - 状态 hash 位于 `~/.cache/svc-dashboard-static/last-published.sha256`。
 - 默认自定义域名为 `svc.iamcheyan.com`，可用 `SVC_DASHBOARD_CNAME` 覆盖。
 - 公开仓库的提交评论、文件变更路径和仓库轨迹按用户要求保留；Goal/Agent 对话、Tmux 标题/路径/终端输出仍脱敏。
+- 静态任务页（公开）：只发布 issue 标题 + 摘要，且按字段脱敏（`sanitize_text`：密钥/家目录/内网 IP）；
+  不采集正文、分支、机器、条目编号与执行日志。页面不渲染任何操作按钮，右侧详情用马赛克占位条，
+  不做"发布后 CSS 模糊"——模糊在开发者工具里可一键去掉，不能当隐私边界。带 `private` / `secret` /
+  `no-publish` 标签的 issue 直接跳过。列表与详情都不发起任何 API 请求（静态版无 `/api/th/*`）。
 - 静态服务页不提供详情弹窗；启动命令显示为 `[命令已隐藏]`，防止公开命令参数和工作目录。
 - 静态 Agent 页的模型“测试”不执行真实请求，显示为静态快照提示；真实模型测试只能在需要登录/令牌的私有 dashboard 上执行。
 - Agent 详情只在公开静态快照中走安全视图：二进制路径、进程 PID/命令、MCP 命令、个人技能/任务名称、提示词和平台账户标识会隐藏或泛化；版本、模型、资源占用、连接状态与调度状态保留。私有实时 `/api/agentdetail` 保留完整本机详情；`export.py` 生成静态 `BOOT.agentDetails` 时显式使用 `for_public=True`。
@@ -214,8 +218,69 @@ TaskHub 引擎（`taskhub.service`，只监听 `127.0.0.1:8096`）的能力，�
   POST `/api/th/dispatch|state|cancel|resume`），所有失败降级为 `{ok:false,msg}`，不影响仪表盘其它页。
 - 前端：`static/app.js` 里的 `TH`/`thRender*` 一组函数；任务卡片显示标题 + 三行摘要 +
   `#编号 · 时间` + 状态/机器 chip，右侧「派发 / 恢复 / 日志」。
-- 派发面板只列**非 hidden** 的 agent（pi / Hermes 分配 / omp）和**在线**机器，默认 `pi` + 本机。
+- 派发是**弹窗**（`.th-dispatch-modal`，挂 `body`，手机为底部滑层），不再内联插在列表顶部；
+  只列**非 hidden** 的 agent（pi / Hermes 分配 / omp）和**在线**机器，选择项是自绘单选（`.th-opt`）。
+  上一次选中的执行者/机器存 `localStorage["svc-th-dispatch"]`，下次打开直接复用（值失效才回落引擎默认）。
 - 代码仓库不需要选：引擎按 Issue 正文/标签判断，判断不出直接拒绝（不会把 agent 丢进 dotfiles）。
 - 任务数据仍由引擎持有（`~/.local/state/taskhub/taskhub.db`）；svc-dashboard 不写任务库。
 - 修改后验证：`curl -s localhost/api/th/health`，再在浏览器打开 `/#cat=activity` → 任务，
-  确认 26 条列表、日志面板、派发面板三处都可用（手机 390 宽无横向溢出）。
+  确认列表、任务详情、派发弹窗三处都可用（手机 390 宽无横向溢出、弹窗为底部滑层）。
+
+## 页面外壳规范（所有页面统一）
+
+功能越来越多，页面不再各写一套头/筛选/卡片，统一成四段式；改样式只动 `static/app.css`
+末尾的「统一页面外壳」块，不要在页面内部临时发明新控件。
+
+1. **页头 `.page-head`**：`h2`（17px/700）+ `.page-hint`（11.5px 灰，最多两行）+ 可选
+   `.page-head-actions` 按钮组。不要再把说明塞进 `h2` 里的 `ghint` 硬拼一行。
+2. **分段子标签 `.page-subnav` + `.page-subnav-btn`**：一个页面 2–5 个，灰色底槽 + 轻量
+   选中块（`--bg-elev` + 1px 边框，不用纯白块压过内容）。窄屏等分、可横向滚动。
+3. **工具行 `.filters` / `.page-tools`**：筛选 chip 与搜索框同高（窄屏 26px / 桌面 28px），
+   与列表间距 12px。
+4. **卡片 `.act-card|.ts-card|.th-card|.mcard|.gcard`**：统一 `--card-radius` + 1px 边框 +
+   `--bg-panel`，内边距 12/14。
+5. 移动端：`--page-pad-x: 13px`，页面底部留 `72px + safe-area`，固定导航不再压住最后一张卡。
+
+已落地：**活动（单页时间线）**、**任务（任务 / Tmux / 日志 三个子页）**、服务（服务 / 定时任务）、
+Agent（4 个运行时子页）、网络页头。新增页面照此四段式接，别再写 `.xxx-header` 私有样式。
+
+任务页在 `#tmux-panel`（render.py 的 `_LITE_TMUX`），划分为两个子页：**智能体任务 (Tasks) / Tmux 终端 (Sessions)**。
+- 顶部导航 `.page-subnav` 自由切换任务流与系统 Tmux 总览，右上角常驻「下发新任务」与刷新主操作。
+- 任务列表支持「活跃任务 / 运行中 / 待派发 / 已完成 / 全部」Chips 过滤，卡片高度瘦身，单行截断摘要。
+- 任务详情包含 5 阶段流水线 Stepper、智能体实时状态横幅、内联人机指令回复卡片（无需 prompt 弹窗）。
+- 控制台双模：直连 Tmux 窗格捕获真彩色 ANSI 输出与快捷控制（滚屏开关/Ctrl+C/回车/唤醒/复制），支持切换结构化事件时间线与 Issue 原文。
+- Tmux 总览恢复完整的会话列表、窗格信息、进程命令与实时微型终端。
+
+列表按状态分组：**正在跑**（进度条 + 最近事件 + 回话/停止）、**待派发**（一行 + 派发）、
+**已完成**（默认折叠）。点卡片进详情，详情页头结构固定为：状态徽标 + `#编号` + GitHub 箭头一行，
+标题单独一行，最后一行左「仓库 · 机器 · 分支」右操作区。正文按区块卡片排列：进度（阶段条 +
+一句话结论）、会话终端、执行时间线（stage 事件默认折叠，可"展开其余 N 条"）、Issue 正文、
+历史执行（点任一条看原始输出）。
+
+`TH` 状态对象必须声明在脚本靠前处（`let autoLocked` 之后），否则 `setCat()` 初始化阶段会踩 TDZ。
+
+## 任务页样式约定
+
+任务页的视觉规则集中在 `static/app.css` 末尾的 `#tmux-panel { --th-* }` 区块，用 token 统一间距
+（4/8/12/16/20）与字号（10.5/11/12.5/13.5/14）。新增元素必须复用这些 token，不要再散落 prop 值。
+
+- 左列表每行固定结构：状态小灯+文字 → `#编号 · 机器 · 阶段` → 时间 → 标题 → 最多两行摘要。
+  行高目标 ≤100px；超过说明塞了多余的一行 meta。列表**没有搜索框**（用户明确不要），只有右上角
+  一个「刷新」按钮 `.th-toolbar`。
+- 桌面（≥701px）左列表与右详情**各自独立滚动**：`.th-split` 高度由 `thFitSplit()` 写入
+  `--th-split-h`（视口高度 − 面板顶部，并对整页残留溢出再修正一次），两列 `overflow-y:auto` +
+  `overscroll-behavior:contain`，页面本身不再滚动。手机仍是单栏整页滚动。
+- 详情页头 `.th-head`：一行「状态徽标 + #编号 · 仓库 · 机器 + GitHub 箭头」，标题独占一行
+  （21px），操作行在标题下方。桌面下页头 sticky 在右列里。操作区**只有一个主操作**
+  （`.th-btn-primary`：实心蓝胶囊；运行中不显示派发，waiting_user 时主操作变成回信），
+  其余全部是无边框幽灵按钮（`.th-btn`），停止用 `.th-btn-danger`。不要再给次要动作加描边方块。
+- 正文是**文档式分节** `.th-sec`（不套卡片边框，靠 18px 留白 + 1px 细线分节）：状态（阶段轨
+  `.th-rail`：点 + 连线，stage 未知时整条隐藏）、会话终端、执行时间线、Issue 正文（`.th-prose`
+  74ch / 13px / 1.78，跟随右列滚动，不再单独限高）、历史执行（行列表）。
+- 手机（≤700px）左右列必须走单栏：`#tmux-panel .th-split { grid-template-columns: minmax(0,1fr) }`
+  在文件末尾兜底，否则桌面双栏规则会把详情压成一条缝（表现为整页空白）。
+- 终态（cancelled/failed/succeeded）不显示百分比进度条，只留阶段条，避免"半截进度"误导。
+- 轮询（会话预览/日志）必须走 `TH.busy` 互斥并只在活跃 run 上开定时器；否则多个 interval
+  叠加会把渲染线程和后端一起拖慢。
+- 用浏览器验收时注意静态资源缓存：`Page.reload` 要带 `ignoreCache=True`，否则看到的是旧
+  app.js（表现为"改了没生效"）。
