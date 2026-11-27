@@ -42,6 +42,22 @@ static/
 
 手势：左右滑动切页、触感反馈、safe-area 适配。桌面端用顶部分类条，移动端用底部页签。
 
+### GitHub 推送活动
+
+[GitHub Actions](.github/workflows/github-snapshots.yml) 约每 5 分钟通过公开仓库的 Activity API 更新 `github-data` 分支的 `github-snapshots.json`，也可手动运行。活动记录展示最近 7 天至多 100 条本人在名下公开仓库的分支推送及新建分支记录，每条链接到该次推送的末端提交；排除 `gh-pages`、`github-data` 和其他账号（含机器人）的推送。私有仓库不采集。
+
+本机 `svc-dashboard-activity.timer` 在每次采集完成后等待 60 秒再次采集，使用 `gh` 的登录凭据读取公开仓库活动，写入本地缓存；活动有变化时同时更新 `github-data` 分支的公开快照。在线 dashboard 优先读取较新的本地缓存；GitHub Pages 通过数据分支的提交号读取快照，避开分支文件缓存。打开活动页时每 30 秒检查，公网快照最多每 120 秒请求一次；实际延迟还受 GitHub API 和采集耗时影响。采集失败时保留上次成功数据。不遍历本地 Git 仓库；整站运维快照仍按原流程单独导出。
+
+安装本机采集器（需要已登录 `gh` 并对本仓库有写权限）：
+
+```sh
+install -Dm644 systemd/svc-dashboard-activity.service ~/.config/systemd/user/svc-dashboard-activity.service
+install -Dm644 systemd/svc-dashboard-activity.timer ~/.config/systemd/user/svc-dashboard-activity.timer
+systemctl --user daemon-reload
+systemctl --user enable --now svc-dashboard-activity.timer
+systemctl --user status svc-dashboard-activity.timer svc-dashboard-activity.service
+```
+
 ## Agent 操作轨迹（设计笔记，复习用）
 
 **灵感来源**：[icesixgod/codex-trajectory](https://github.com/icesixgod/codex-trajectory)（95★，MIT）——
@@ -186,7 +202,7 @@ journalctl -u svc-dashboard -f             # 日志
 
 ## Tailscale 源切换
 
-用户手机经 Tailscale（CGNAT 段 `100.64.0.0/10`）访问时，页面里的服务链接主机会自动从内网 IP 切到 Tailscale IP（服务端检测客户端来源网段，前端 `linkHost()` 切换）。
+用户手机经 Tailscale（CGNAT 段 `******/10`）访问时，页面里的服务链接主机会自动从内网 IP 切到 Tailscale IP（服务端检测客户端来源网段，前端 `linkHost()` 切换）。
 
 ## 注意事项
 

@@ -1,10 +1,10 @@
 [Unit]
-Description=Refresh svc-dashboard Git activity every minute
+Description=Refresh public GitHub activity regularly
 
 [Timer]
 OnBootSec=30s
-OnUnitActiveSec=60s
-AccuracySec=5s
+OnUnitInactiveSec=60s
+AccuracySec=1s
 Unit=svc-dashboard-activity.service
 
 [Install]
